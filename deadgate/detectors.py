@@ -11,7 +11,14 @@ switched off, which is worse than not shipping it.
 from __future__ import annotations
 
 import re
+import os
 from dataclasses import dataclass
+
+# EXPERIMENT AFFORDANCE, not a product feature. With DEADGATE_NAIVE=1 the detectors run
+# WITHOUT the suppressions and narrowings that tracing real repositories forced on them,
+# and D4 is withheld because it did not exist then. It exists so the cost of each
+# suppression can be measured against an identical corpus instead of two samples.
+NAIVE = os.environ.get("DEADGATE_NAIVE") == "1"
 
 FILTERS = {"grep", "jq", "head", "tail", "tee", "awk", "sed", "cut", "sort", "uniq", "wc", "tr"}
 
@@ -126,7 +133,7 @@ def d1_skippable_upstream(jobs: dict) -> list[Finding]:
         text = _steps_text(job)
         if re.search(r"needs\.[A-Za-z0-9_\-]+\.(result|outputs)", text):
             continue
-        if re.search(r"needs\.[A-Za-z0-9_\-]+\.outputs\.", str(job.get("if") or "")):
+        if not NAIVE and re.search(r"needs\.[A-Za-z0-9_\-]+\.outputs\.", str(job.get("if") or "")):
             continue
         for up in skippable:
             found.append(Finding(
@@ -215,9 +222,9 @@ def d3_pipe_masked_exit(jobs: dict) -> list[Finding]:
                 tail = line.rsplit("|", 1)[1].strip().split()
                 if not tail:
                     continue
-                if tail[0] in FILTERS and _upstream_can_fail(line):
+                if tail[0] in FILTERS and (NAIVE or _upstream_can_fail(line)):
                     assigned = (re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", line) or [None, ""])[1]
-                    if _result_is_emptiness_checked(assigned, body):
+                    if not NAIVE and _result_is_emptiness_checked(assigned, body):
                         continue
                     label = step.get("name") or line[:40]
                     found.append(Finding(
@@ -275,11 +282,15 @@ DETECTORS = (d1_skippable_upstream, d2_fanin_without_result_check,
               d3_pipe_masked_exit, d4_outputs_gate_without_result_check)
 
 
+def active_detectors():
+    return DETECTORS[:3] if NAIVE else DETECTORS
+
+
 def scan_workflow(doc: dict) -> list[Finding]:
     jobs = (doc or {}).get("jobs") or {}
     if not isinstance(jobs, dict):
         return []
     out = []
-    for fn in DETECTORS:
+    for fn in active_detectors():
         out.extend(fn(jobs))
     return out
