@@ -4,3 +4,7 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+wfcache/
+cache_manifest.json
+ab_naive.json
+ab_current.json

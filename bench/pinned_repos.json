@@ -1,0 +1,1114 @@
+[
+ {
+  "repo": "openclaw/openclaw",
+  "stars": 391520
+ },
+ {
+  "repo": "NousResearch/hermes-agent",
+  "stars": 251739
+ },
+ {
+  "repo": "anomalyco/opencode",
+  "stars": 212070
+ },
+ {
+  "repo": "microsoft/vscode",
+  "stars": 193593
+ },
+ {
+  "repo": "firecrawl/firecrawl",
+  "stars": 189247
+ },
+ {
+  "repo": "Comfy-Org/ComfyUI",
+  "stars": 136353
+ },
+ {
+  "repo": "browser-use/browser-use",
+  "stars": 117300
+ },
+ {
+  "repo": "vllm-project/vllm",
+  "stars": 93299
+ },
+ {
+  "repo": "koala73/worldmonitor",
+  "stars": 87917
+ },
+ {
+  "repo": "stablyai/orca",
+  "stars": 86611
+ },
+ {
+  "repo": "pbakaus/impeccable",
+  "stars": 77793
+ },
+ {
+  "repo": "unslothai/unsloth",
+  "stars": 77287
+ },
+ {
+  "repo": "headroomlabs-ai/headroom",
+  "stars": 74531
+ },
+ {
+  "repo": "ruvnet/ruflo",
+  "stars": 74013
+ },
+ {
+  "repo": "code-yeongyu/oh-my-openagent",
+  "stars": 69850
+ },
+ {
+  "repo": "heygen-com/hyperframes",
+  "stars": 58035
+ },
+ {
+  "repo": "appwrite/appwrite",
+  "stars": 57584
+ },
+ {
+  "repo": "firstcontributions/first-contributions",
+  "stars": 56242
+ },
+ {
+  "repo": "ClickHouse/ClickHouse",
+  "stars": 50273
+ },
+ {
+  "repo": "astral-sh/ruff",
+  "stars": 49929
+ },
+ {
+  "repo": "JuliaLang/julia",
+  "stars": 49189
+ },
+ {
+  "repo": "juspay/hyperswitch",
+  "stars": 45294
+ },
+ {
+  "repo": "llvm/llvm-project",
+  "stars": 40953
+ },
+ {
+  "repo": "volcengine/OpenViking",
+  "stars": 39325
+ },
+ {
+  "repo": "CopilotKit/CopilotKit",
+  "stars": 37790
+ },
+ {
+  "repo": "sgl-project/sglang",
+  "stars": 36828
+ },
+ {
+  "repo": "gitroomhq/postiz-app",
+  "stars": 36795
+ },
+ {
+  "repo": "esengine/DeepSeek-Reasonix",
+  "stars": 35741
+ },
+ {
+  "repo": "jdx/mise",
+  "stars": 34674
+ },
+ {
+  "repo": "nautechsystems/nautilus_trader",
+  "stars": 29666
+ },
+ {
+  "repo": "Infisical/infisical",
+  "stars": 29637
+ },
+ {
+  "repo": "mastra-ai/mastra",
+  "stars": 28605
+ },
+ {
+  "repo": "trycua/cua",
+  "stars": 28490
+ },
+ {
+  "repo": "QwenLM/qwen-code",
+  "stars": 28337
+ },
+ {
+  "repo": "gastownhall/beads",
+  "stars": 27695
+ },
+ {
+  "repo": "manaflow-ai/cmux",
+  "stars": 27681
+ },
+ {
+  "repo": "microsoft/vcpkg",
+  "stars": 27520
+ },
+ {
+  "repo": "Wox-launcher/Wox",
+  "stars": 27492
+ },
+ {
+  "repo": "chromium/chromium",
+  "stars": 24969
+ },
+ {
+  "repo": "matplotlib/matplotlib",
+  "stars": 23331
+ },
+ {
+  "repo": "jundot/omlx",
+  "stars": 22593
+ },
+ {
+  "repo": "RustPython/RustPython",
+  "stars": 22381
+ },
+ {
+  "repo": "facebook/flow",
+  "stars": 22297
+ },
+ {
+  "repo": "openobserve/openobserve",
+  "stars": 22281
+ },
+ {
+  "repo": "steipete/CodexBar",
+  "stars": 22250
+ },
+ {
+  "repo": "Homebrew/homebrew-cask",
+  "stars": 22247
+ },
+ {
+  "repo": "JetBrains/intellij-community",
+  "stars": 20614
+ },
+ {
+  "repo": "triton-lang/triton",
+  "stars": 20318
+ },
+ {
+  "repo": "getpaseo/paseo",
+  "stars": 19848
+ },
+ {
+  "repo": "mountain-loop/yaak",
+  "stars": 19293
+ },
+ {
+  "repo": "bggRGjQaUbCoE/PiliPlus",
+  "stars": 19136
+ },
+ {
+  "repo": "google-gemini/cookbook",
+  "stars": 17816
+ },
+ {
+  "repo": "apache/brpc",
+  "stars": 17621
+ },
+ {
+  "repo": "termux/termux-packages",
+  "stars": 17108
+ },
+ {
+  "repo": "coder/coder",
+  "stars": 16872
+ },
+ {
+  "repo": "umijs/umi",
+  "stars": 16040
+ },
+ {
+  "repo": "Homebrew/homebrew-core",
+  "stars": 15613
+ },
+ {
+  "repo": "eigent-ai/eigent",
+  "stars": 15463
+ },
+ {
+  "repo": "documenso/documenso",
+  "stars": 15346
+ },
+ {
+  "repo": "NVIDIA/TensorRT-LLM",
+  "stars": 14771
+ },
+ {
+  "repo": "CoplayDev/unity-mcp",
+  "stars": 14734
+ },
+ {
+  "repo": "casdoor/casdoor",
+  "stars": 14518
+ },
+ {
+  "repo": "SubtitleEdit/subtitleedit",
+  "stars": 14459
+ },
+ {
+  "repo": "libretro/RetroArch",
+  "stars": 14239
+ },
+ {
+  "repo": "BasedHardware/omi",
+  "stars": 13646
+ },
+ {
+  "repo": "HIllya51/LunaTranslator",
+  "stars": 13593
+ },
+ {
+  "repo": "facebook/astryx",
+  "stars": 13555
+ },
+ {
+  "repo": "hajimehoshi/ebiten",
+  "stars": 13539
+ },
+ {
+  "repo": "CodebuffAI/freebuff",
+  "stars": 13267
+ },
+ {
+  "repo": "web-infra-dev/rspack",
+  "stars": 12934
+ },
+ {
+  "repo": "OrchestratorInc/agent-orchestrator",
+  "stars": 12852
+ },
+ {
+  "repo": "Z3Prover/z3",
+  "stars": 12752
+ },
+ {
+  "repo": "elie222/inbox-zero",
+  "stars": 12424
+ },
+ {
+  "repo": "WordPress/gutenberg",
+  "stars": 11764
+ },
+ {
+  "repo": "horsicq/Detect-It-Easy",
+  "stars": 11640
+ },
+ {
+  "repo": "lexmount/moli",
+  "stars": 11360
+ },
+ {
+  "repo": "microsoft/winget-pkgs",
+  "stars": 11130
+ },
+ {
+  "repo": "openai/codex-security",
+  "stars": 10987
+ },
+ {
+  "repo": "skypilot-org/skypilot",
+  "stars": 10681
+ },
+ {
+  "repo": "omnigent-ai/omnigent",
+  "stars": 10633
+ },
+ {
+  "repo": "Ranchero-Software/NetNewsWire",
+  "stars": 10450
+ },
+ {
+  "repo": "open-gsd/gsd-core",
+  "stars": 10251
+ },
+ {
+  "repo": "morluto/rea",
+  "stars": 10045
+ },
+ {
+  "repo": "dr5hn/countries-states-cities-database",
+  "stars": 9858
+ },
+ {
+  "repo": "klzgrad/naiveproxy",
+  "stars": 9492
+ },
+ {
+  "repo": "freebsd/freebsd-src",
+  "stars": 9369
+ },
+ {
+  "repo": "rsuite/rsuite",
+  "stars": 8691
+ },
+ {
+  "repo": "storytold/photocraft",
+  "stars": 8114
+ },
+ {
+  "repo": "longhorn/longhorn",
+  "stars": 8018
+ },
+ {
+  "repo": "vercel-labs/native",
+  "stars": 7751
+ },
+ {
+  "repo": "Gentleman-Programming/gentle-ai",
+  "stars": 7582
+ },
+ {
+  "repo": "alphaXiv/OpenResearch",
+  "stars": 6683
+ },
+ {
+  "repo": "vllm-project/semantic-router",
+  "stars": 6041
+ },
+ {
+  "repo": "crimera/piko",
+  "stars": 5565
+ },
+ {
+  "repo": "buildermethods/agent-os",
+  "stars": 5475
+ },
+ {
+  "repo": "WyattBlue/auto-editor",
+  "stars": 5433
+ },
+ {
+  "repo": "google/tcmalloc",
+  "stars": 5369
+ },
+ {
+  "repo": "ArcReel/ArcReel",
+  "stars": 5319
+ },
+ {
+  "repo": "zircote/swagger-php",
+  "stars": 5309
+ },
+ {
+  "repo": "Expensify/App",
+  "stars": 5048
+ },
+ {
+  "repo": "awslabs/aidlc-workflows",
+  "stars": 5019
+ },
+ {
+  "repo": "mock-server/mockserver-monorepo",
+  "stars": 4985
+ },
+ {
+  "repo": "fastmail/Squire",
+  "stars": 4916
+ },
+ {
+  "repo": "FCL-Team/FoldCraftLauncher",
+  "stars": 4863
+ },
+ {
+  "repo": "apache/shiro",
+  "stars": 4460
+ },
+ {
+  "repo": "agent-substrate/substrate",
+  "stars": 4445
+ },
+ {
+  "repo": "kirodotdev/KiroCrew",
+  "stars": 4304
+ },
+ {
+  "repo": "ProbiusOfficial/Hello-CTF",
+  "stars": 4235
+ },
+ {
+  "repo": "erxes/erxes",
+  "stars": 4095
+ },
+ {
+  "repo": "fishercoder1534/Leetcode",
+  "stars": 4005
+ },
+ {
+  "repo": "AmintaCCCP/GithubStarsManager",
+  "stars": 3639
+ },
+ {
+  "repo": "carthage-software/mago",
+  "stars": 3487
+ },
+ {
+  "repo": "microsoft/tgrep",
+  "stars": 3415
+ },
+ {
+  "repo": "OmniNull/OmniWM",
+  "stars": 3231
+ },
+ {
+  "repo": "TanStack/ai",
+  "stars": 3168
+ },
+ {
+  "repo": "easylist/easylist",
+  "stars": 3150
+ },
+ {
+  "repo": "spiceai/spiceai",
+  "stars": 3100
+ },
+ {
+  "repo": "CVEProject/cvelistV5",
+  "stars": 3033
+ },
+ {
+  "repo": "openclaw/wacli",
+  "stars": 2786
+ },
+ {
+  "repo": "icereed/paperless-gpt",
+  "stars": 2735
+ },
+ {
+  "repo": "runkids/skillshare",
+  "stars": 2723
+ },
+ {
+  "repo": "nextcloud/ios",
+  "stars": 2510
+ },
+ {
+  "repo": "NovaSky-AI/SkyRL",
+  "stars": 2382
+ },
+ {
+  "repo": "bootc-dev/bootc",
+  "stars": 2301
+ },
+ {
+  "repo": "liferay/liferay-portal",
+  "stars": 2265
+ },
+ {
+  "repo": "cozystack/cozystack",
+  "stars": 2247
+ },
+ {
+  "repo": "lightseekorg/tokenspeed",
+  "stars": 2191
+ },
+ {
+  "repo": "sched-ext/scx",
+  "stars": 2177
+ },
+ {
+  "repo": "feldera/feldera",
+  "stars": 2113
+ },
+ {
+  "repo": "zarf-dev/zarf",
+  "stars": 2064
+ },
+ {
+  "repo": "mthcht/awesome-lists",
+  "stars": 1933
+ },
+ {
+  "repo": "xenodium/agent-shell",
+  "stars": 1928
+ },
+ {
+  "repo": "phishdestroy/destroylist",
+  "stars": 1902
+ },
+ {
+  "repo": "buildermethods/design-os",
+  "stars": 1861
+ },
+ {
+  "repo": "thorvg/thorvg",
+  "stars": 1859
+ },
+ {
+  "repo": "NethermindEth/nethermind",
+  "stars": 1612
+ },
+ {
+  "repo": "tddworks/ClaudeBar",
+  "stars": 1527
+ },
+ {
+  "repo": "AdamPlatin123/dsh-plugin-radar",
+  "stars": 1465
+ },
+ {
+  "repo": "KhronosGroup/KTX-Software",
+  "stars": 1376
+ },
+ {
+  "repo": "MetaMask/eth-phishing-detect",
+  "stars": 1337
+ },
+ {
+  "repo": "akitaonrails/ai-jail",
+  "stars": 1324
+ },
+ {
+  "repo": "grqz/grqz",
+  "stars": 1289
+ },
+ {
+  "repo": "dotnet/dotnet",
+  "stars": 1288
+ },
+ {
+  "repo": "joshuafuller/ATAK-Maps",
+  "stars": 1281
+ },
+ {
+  "repo": "Arize-ai/openinference",
+  "stars": 1255
+ },
+ {
+  "repo": "taleshape-com/shaper",
+  "stars": 1253
+ },
+ {
+  "repo": "wcandillon/react-native-webgpu",
+  "stars": 1252
+ },
+ {
+  "repo": "bugsnag/bugsnag-android",
+  "stars": 1242
+ },
+ {
+  "repo": "modu-ai/moai-adk",
+  "stars": 1230
+ },
+ {
+  "repo": "hyperrealm/libconfig",
+  "stars": 1222
+ },
+ {
+  "repo": "DragonOS-Community/DragonOS",
+  "stars": 1211
+ },
+ {
+  "repo": "phase1geo/Minder",
+  "stars": 1208
+ },
+ {
+  "repo": "GaijinEntertainment/daScript",
+  "stars": 1181
+ },
+ {
+  "repo": "OSGeo/grass",
+  "stars": 1176
+ },
+ {
+  "repo": "Dicklesworthstone/coding_agent_session_search",
+  "stars": 1161
+ },
+ {
+  "repo": "help-me-mom/ng-mocks",
+  "stars": 1159
+ },
+ {
+  "repo": "okou-ai/okou",
+  "stars": 1153
+ },
+ {
+  "repo": "autonomous-ai/openharness",
+  "stars": 1137
+ },
+ {
+  "repo": "FlashML-org/FreeVideo",
+  "stars": 1123
+ },
+ {
+  "repo": "artifact-keeper/artifact-keeper",
+  "stars": 1111
+ },
+ {
+  "repo": "nextcloud/notes-android",
+  "stars": 1102
+ },
+ {
+  "repo": "josh-berry/tab-stash",
+  "stars": 1088
+ },
+ {
+  "repo": "meta-pytorch/monarch",
+  "stars": 1079
+ },
+ {
+  "repo": "performancecopilot/pcp",
+  "stars": 1077
+ },
+ {
+  "repo": "tensorlakeai/tensorlake",
+  "stars": 1018
+ },
+ {
+  "repo": "mickadesign/fluid-functionalism",
+  "stars": 987
+ },
+ {
+  "repo": "appium/appium-xcuitest-driver",
+  "stars": 900
+ },
+ {
+  "repo": "enzonotario/dolarapi.com",
+  "stars": 738
+ },
+ {
+  "repo": "hashicorp/consul-k8s",
+  "stars": 709
+ },
+ {
+  "repo": "mozilla-mobile/reference-browser",
+  "stars": 665
+ },
+ {
+  "repo": "terrapkg/packages",
+  "stars": 652
+ },
+ {
+  "repo": "SonarSource/sonarlint-intellij",
+  "stars": 641
+ },
+ {
+  "repo": "lukaszliniewicz/Pandrator",
+  "stars": 630
+ },
+ {
+  "repo": "akitaonrails/ai-usagebar",
+  "stars": 625
+ },
+ {
+  "repo": "eslint/markdown",
+  "stars": 580
+ },
+ {
+  "repo": "stefan-niedermann/nextcloud-deck",
+  "stars": 569
+ },
+ {
+  "repo": "amywork777/lipflow",
+  "stars": 526
+ },
+ {
+  "repo": "slackhq/compose-lints",
+  "stars": 515
+ },
+ {
+  "repo": "receptron/mulmocast-cli",
+  "stars": 475
+ },
+ {
+  "repo": "wasi-master/wmkeyboard",
+  "stars": 464
+ },
+ {
+  "repo": "ImChong/Robotics_Notebooks",
+  "stars": 459
+ },
+ {
+  "repo": "ROCm/rocm-libraries",
+  "stars": 444
+ },
+ {
+  "repo": "metasequoiaime/msime",
+  "stars": 430
+ },
+ {
+  "repo": "smithersai/smithers",
+  "stars": 429
+ },
+ {
+  "repo": "AceDataCloud/Nexior",
+  "stars": 399
+ },
+ {
+  "repo": "nextcloud/appstore",
+  "stars": 394
+ },
+ {
+  "repo": "nflverse/nfldata",
+  "stars": 367
+ },
+ {
+  "repo": "prestonbrown/helixscreen",
+  "stars": 351
+ },
+ {
+  "repo": "omacom/omarchy-plugin-marketplace",
+  "stars": 332
+ },
+ {
+  "repo": "VisiGrid/VisiGrid",
+  "stars": 332
+ },
+ {
+  "repo": "miuuyy/Astra-Ares",
+  "stars": 300
+ },
+ {
+  "repo": "everruns/bashkit",
+  "stars": 291
+ },
+ {
+  "repo": "bundlewrap/bundlewrap",
+  "stars": 290
+ },
+ {
+  "repo": "RooCodeInc/Roomote",
+  "stars": 281
+ },
+ {
+  "repo": "ktwu01/benchmark-radar",
+  "stars": 280
+ },
+ {
+  "repo": "ente/privacypack",
+  "stars": 279
+ },
+ {
+  "repo": "danjdewhurst/story-skills",
+  "stars": 275
+ },
+ {
+  "repo": "karanb192/awesome-claude-code-mods",
+  "stars": 257
+ },
+ {
+  "repo": "bevyengine/bevy-website",
+  "stars": 250
+ },
+ {
+  "repo": "chrissotraidis/bluewake",
+  "stars": 240
+ },
+ {
+  "repo": "voidzero-dev/oxc-angular-compiler",
+  "stars": 234
+ },
+ {
+  "repo": "nextcloud/talk-ios",
+  "stars": 232
+ },
+ {
+  "repo": "z-shell/F-Sy-H",
+  "stars": 218
+ },
+ {
+  "repo": "DefiLlama/dimension-adapters",
+  "stars": 213
+ },
+ {
+  "repo": "bugsfreeweb/LiveTVCollector",
+  "stars": 213
+ },
+ {
+  "repo": "TryGhost/Editorial",
+  "stars": 212
+ },
+ {
+  "repo": "TauCetiProject/TauCeti",
+  "stars": 211
+ },
+ {
+  "repo": "googlefonts/fontc",
+  "stars": 193
+ },
+ {
+  "repo": "PerpetualSoftware/pad",
+  "stars": 185
+ },
+ {
+  "repo": "amirfish1/claude-command-center",
+  "stars": 177
+ },
+ {
+  "repo": "thesamet/sbt-protoc",
+  "stars": 174
+ },
+ {
+  "repo": "nazarli-shabnam/clevis",
+  "stars": 170
+ },
+ {
+  "repo": "ProxyScrape/free-proxy-list",
+  "stars": 168
+ },
+ {
+  "repo": "Sorwcyra/ds-vision-skill",
+  "stars": 164
+ },
+ {
+  "repo": "RestedXP/RXPGuides",
+  "stars": 160
+ },
+ {
+  "repo": "Naituw/AskHuman",
+  "stars": 142
+ },
+ {
+  "repo": "redhat-openshift-ecosystem/community-operators",
+  "stars": 140
+ },
+ {
+  "repo": "aai-research-lab/FastMDXplora",
+  "stars": 134
+ },
+ {
+  "repo": "liununu/liununu",
+  "stars": 133
+ },
+ {
+  "repo": "s4ntrx/Cybersecurity-Threats-Guide",
+  "stars": 131
+ },
+ {
+  "repo": "LanternOps/breeze",
+  "stars": 130
+ },
+ {
+  "repo": "Open-BFME/Open-BFME-1",
+  "stars": 122
+ },
+ {
+  "repo": "z-shell/zsh-eza",
+  "stars": 121
+ },
+ {
+  "repo": "MichengAI/dsh-codex-ui",
+  "stars": 118
+ },
+ {
+  "repo": "woogles-io/liwords",
+  "stars": 117
+ },
+ {
+  "repo": "aiskendi/pencarimovie-server",
+  "stars": 113
+ },
+ {
+  "repo": "xONEIROS/Automated-Commit",
+  "stars": 113
+ },
+ {
+  "repo": "AdaCore/gtkada",
+  "stars": 111
+ },
+ {
+  "repo": "JHGuitarFreak/UQM-MegaMod",
+  "stars": 110
+ },
+ {
+  "repo": "Clawdi-AI/clawdi",
+  "stars": 103
+ },
+ {
+  "repo": "tornado-doc/tdoc",
+  "stars": 103
+ },
+ {
+  "repo": "eas4ai/suprnova",
+  "stars": 88
+ },
+ {
+  "repo": "icssc/AntAlmanac",
+  "stars": 80
+ },
+ {
+  "repo": "rjwalters/kicad-tools",
+  "stars": 64
+ },
+ {
+  "repo": "s0liton/ps5-romm",
+  "stars": 60
+ },
+ {
+  "repo": "tutur3u/platform",
+  "stars": 55
+ },
+ {
+  "repo": "radium-wang/Hasselblad-X-System-CIM-Firmware-R",
+  "stars": 54
+ },
+ {
+  "repo": "RobZombie9043/steam-files-es-de",
+  "stars": 54
+ },
+ {
+  "repo": "yakew7/Fair-Code",
+  "stars": 49
+ },
+ {
+  "repo": "Inikoo-Ltd/aiku",
+  "stars": 49
+ },
+ {
+  "repo": "Chaos2Cured/FreeLattice",
+  "stars": 47
+ },
+ {
+  "repo": "karalang/kara",
+  "stars": 45
+ },
+ {
+  "repo": "push-in/pam-native",
+  "stars": 42
+ },
+ {
+  "repo": "SinishaDjukic/worca-cc",
+  "stars": 38
+ },
+ {
+  "repo": "Mai-with-u/plugin-repo",
+  "stars": 37
+ },
+ {
+  "repo": "urban-toolkit/curio",
+  "stars": 36
+ },
+ {
+  "repo": "Juniper/jvd",
+  "stars": 33
+ },
+ {
+  "repo": "esoltys/luminous",
+  "stars": 30
+ },
+ {
+  "repo": "lootlog/monorepo",
+  "stars": 29
+ },
+ {
+  "repo": "withmarfa/marfa",
+  "stars": 28
+ },
+ {
+  "repo": "nopara73/LongevityWorldCup",
+  "stars": 26
+ },
+ {
+  "repo": "fibsem-os/fibsem-os",
+  "stars": 25
+ },
+ {
+  "repo": "piconic-ai/barefootjs",
+  "stars": 24
+ },
+ {
+  "repo": "Maklith/Kitopia",
+  "stars": 23
+ },
+ {
+  "repo": "Obein/DNS-Worker",
+  "stars": 21
+ },
+ {
+  "repo": "Luminara-Hub/namada-ecosystem",
+  "stars": 20
+ },
+ {
+  "repo": "crlngn/crlngn-ui",
+  "stars": 20
+ },
+ {
+  "repo": "ArtemioPadilla/watchboard",
+  "stars": 19
+ },
+ {
+  "repo": "10x-software/py10x",
+  "stars": 19
+ },
+ {
+  "repo": "yohanvillarp/metamorph",
+  "stars": 19
+ },
+ {
+  "repo": "Dicklesworthstone/franken_lean",
+  "stars": 18
+ },
+ {
+  "repo": "projectbluefin/utah",
+  "stars": 18
+ },
+ {
+  "repo": "raro42/mac-stats",
+  "stars": 18
+ },
+ {
+  "repo": "MentallyQuill/Tavernary",
+  "stars": 17
+ },
+ {
+  "repo": "sbluemin/fleet-harness",
+  "stars": 17
+ },
+ {
+  "repo": "MendixMau/mxcli-project-toolkit",
+  "stars": 16
+ },
+ {
+  "repo": "Subway-Builder-Modded/registry",
+  "stars": 16
+ },
+ {
+  "repo": "neventheboss/daily_uploads",
+  "stars": 15
+ },
+ {
+  "repo": "Simon-He95/Simon-He95",
+  "stars": 15
+ },
+ {
+  "repo": "ScreamingFace/screamingface",
+  "stars": 14
+ },
+ {
+  "repo": "OnCloud-at/encrypted-memories",
+  "stars": 14
+ },
+ {
+  "repo": "suiflex/ForgeGuard",
+  "stars": 14
+ },
+ {
+  "repo": "saibimajdi/typesafeai-dotnet-sdk",
+  "stars": 13
+ },
+ {
+  "repo": "X-itachi-X/X-itachi-X",
+  "stars": 13
+ },
+ {
+  "repo": "shergin/baton",
+  "stars": 12
+ },
+ {
+  "repo": "m1stadev/m1stadev",
+  "stars": 11
+ },
+ {
+  "repo": "pyca/verified-garbage",
+  "stars": 10
+ },
+ {
+  "repo": "M0VENTURA/Popularr",
+  "stars": 10
+ }
+]

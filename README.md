@@ -51,6 +51,16 @@ the corpus was green**:
 Both were found by running against a real 25k-star repository, not by the suite. That is the
 argument this tool makes about everyone else's checks, so it is held to it too.
 
+## Measurements
+
+Figures, and the unit each one is in, are in [MEASUREMENT.md](MEASUREMENT.md). Reproduce them
+with `python bench/build_cache.py` then `python bench/ab.py`.
+
+The short version: corpus totals are weighted by workflow size, one monorepo carries 55% of the
+naive D1 count, and the median affected repository sees 2 findings where the pre-narrowing
+detector gave 3. `bench/ab.py` prints the per-repo median, p90 and max alongside every total,
+so the unit cannot be dropped by accident.
+
 ## Scope, stated plainly
 
 This reads workflow files. It does **not** read branch-protection settings, so it reports the
