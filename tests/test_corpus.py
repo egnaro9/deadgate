@@ -201,3 +201,142 @@ def test_d3_fire_and_forget_is_not_high():
     """A logging pipeline masks nothing anybody reads."""
     f = _of(_D3_CLEANUP, "D3")
     assert f and f[0].severity == "MEDIUM", f
+
+
+# ------------------------------------------------------------- what the corpus did NOT specify
+# An audit found that the corpus suite checks WHICH detector fires on which file, and nothing
+# else. Job attribution could be blanked, every `repro` emptied, and three severity guards
+# deleted, with all 121 tests green. The corpus is called the specification in the README, so
+# these close the gap between what it specifies and what the tool promises.
+
+def _findings(doc):
+    return list(scan_workflow(doc))
+
+
+def test_every_finding_names_the_job_it_is_about():
+    """cli.py prints `file::job` and the API tier looks the job up to resolve branch
+    protection, so a blank job is a finding nobody can act on. `job=name` could be replaced
+    with `job=""` on D1 and D2 with the suite green."""
+    for path in BROKEN:
+        doc = yaml.safe_load(path.read_text())
+        jobs = (doc or {}).get("jobs") or {}
+        for f in _findings(doc):
+            assert f.job, f"{path.name}: {f.detector} finding has no job"
+            assert f.job in jobs, f"{path.name}: {f.detector} names job {f.job!r}, not in {sorted(jobs)}"
+
+
+def test_every_finding_carries_a_reproduction():
+    """The README: 'Every finding carries a reproduction. A finding without one is an opinion,
+    and this tool does not emit opinions.' Nothing read Finding.repro, so every repro could be
+    blanked on every detector at once."""
+    for path in BROKEN:
+        doc = yaml.safe_load(path.read_text())
+        for f in _findings(doc):
+            assert f.repro.strip(), f"{path.name}: {f.detector} on {f.job} has an empty repro"
+            assert len(f.repro) > 30, f"{path.name}: {f.detector} repro is too thin to act on"
+            assert f.detail.strip(), f"{path.name}: {f.detector} on {f.job} has no detail"
+
+
+def test_a_ship_job_on_a_pull_request_is_still_LOW():
+    """The ship-job guard was unreachable from the test written for it: that fixture is
+    tag-triggered, so `not _on_pull_request` already returned LOW one line later and deleting
+    the guard changed nothing. This reaches the guard itself."""
+    doc = yaml.safe_load("""
+on: [pull_request]
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo prep
+  publish:
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - run: twine upload dist/*
+""")
+    hits = [f for f in _findings(doc) if f.detector == "D1" and f.job == "publish"]
+    assert hits, "expected a D1 finding on the publish job"
+    assert all(f.severity == "LOW" for f in hits), (
+        f"a release job is not a merge gate even on a PR: got {[f.severity for f in hits]}")
+
+
+def test_a_check_job_on_a_pull_request_is_HIGH():
+    """The other side of the same guard, so neither branch can be deleted silently."""
+    doc = yaml.safe_load("""
+on: [pull_request]
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo prep
+  verify-tests:
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest
+""")
+    hits = [f for f in _findings(doc) if f.detector == "D1" and f.job == "verify-tests"]
+    assert hits and all(f.severity == "HIGH" for f in hits), (
+        f"a PR verification job that can silently not run is HIGH: got {[f.severity for f in hits]}")
+
+
+def test_d3_outside_a_pull_request_is_LOW():
+    """b4 is `on: [push]` and does fire D3, but the corpus asserted only the detector id, so
+    D3's first severity line was dead in the suite. cli.py hides LOW without --all, so this
+    guard decides whether the finding is printed at all."""
+    b4 = next(p for p in BROKEN if p.name.startswith("b4_"))
+    doc = yaml.safe_load(b4.read_text())
+    d3 = [f for f in _findings(doc) if f.detector == "D3"]
+    assert d3, "b4 should still fire D3"
+    assert all(f.severity == "LOW" for f in d3), (
+        f"a push-only workflow is not a merge gate: got {[f.severity for f in d3]}")
+
+
+@pytest.mark.parametrize("cond", [
+    "${{ always() }}",
+    "${{ !cancelled() }}",
+    "${{ success() || failure() }}",
+    "${{ failure() || success() }}",
+])
+def test_conditions_that_never_skip_raise_no_alarm(cond):
+    """_NEVER_SKIPS exists because the detectors were wrong against a real 25k-star repo while
+    the corpus was green. Two of its four alternatives had no fixture, so they could be removed
+    and the false-alarm class they prevent would come straight back."""
+    doc = yaml.safe_load(f"""
+on: [pull_request]
+jobs:
+  build:
+    if: "{cond}"
+    runs-on: ubuntu-latest
+    steps:
+      - run: make
+  verify-tests:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest
+""")
+    d1 = [f for f in scan_workflow(doc) if f.detector == "D1"]
+    assert not d1, f"{cond} runs in normal operation; flagging it is the false alarm g7 exists for"
+
+
+def test_a_genuinely_skip_prone_condition_still_fires():
+    """The other side, so the allowlist cannot be widened to swallow everything."""
+    doc = yaml.safe_load("""
+on: [pull_request]
+jobs:
+  build:
+    if: "${{ github.actor != 'dependabot[bot]' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - run: make
+  verify-tests:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest
+""")
+    assert [f for f in scan_workflow(doc) if f.detector == "D1"], (
+        "a condition that can evaluate false must still be reported")
