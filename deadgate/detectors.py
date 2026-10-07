@@ -30,6 +30,7 @@ class Finding:
     title: str
     detail: str
     repro: str
+    severity: str = "HIGH"
 
 
 def _truthy_always(cond) -> bool:
@@ -241,7 +242,43 @@ def d3_pipe_masked_exit(jobs: dict) -> list[Finding]:
     return found
 
 
-def d4_outputs_gate_without_result_check(jobs: dict) -> list[Finding]:
+# Severity for D4 is decided by TWO questions the workflow file can answer:
+#   does this workflow run on pull_request, so the job is a candidate required check, and
+#   is the gated job a VERIFICATION job, so skipping it means nothing was checked.
+# Skipping a deploy because no release was cut is intended. Skipping the tests because the
+# path filter crashed is not. Without the branch-protection API this is the honest ceiling,
+# and the tier says which question it could not answer.
+_CHECK_JOB = re.compile(
+    r"\b(test|tests|lint|check|checks|verify|typecheck|type-check|coverage|audit|"
+    r"security|e2e|unit|integration|spec|validate|ci)\b", re.I)
+_SHIP_JOB = re.compile(
+    r"\b(deploy|publish|release|upload|notify|docs|announce|changelog|tag|sign|"
+    r"docker|image|artifact)\b", re.I)
+
+
+def _on_pull_request(doc: dict) -> bool:
+    on = (doc or {}).get("on") or (doc or {}).get(True)
+    if isinstance(on, str):
+        return on == "pull_request"
+    if isinstance(on, list):
+        return "pull_request" in on
+    if isinstance(on, dict):
+        return "pull_request" in on or "pull_request_target" in on
+    return False
+
+
+def _d4_severity(job_name: str, job: dict, doc: dict) -> str:
+    name = f"{job_name} {job.get('name') or ''}"
+    if _SHIP_JOB.search(name) and not _CHECK_JOB.search(name):
+        return "LOW"          # a release step, where skipping is usually the intent
+    if not _on_pull_request(doc):
+        return "LOW"          # never runs on a PR, so it is not a merge gate
+    if _CHECK_JOB.search(name):
+        return "HIGH"         # a PR verification job that can silently not run
+    return "MEDIUM"
+
+
+def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) -> list[Finding]:
     """A job gated on an upstream's OUTPUTS, with nothing checking that upstream SUCCEEDED.
 
     The common change-detection shape:  if: needs.detect.outputs.rust == 'true'
@@ -264,9 +301,11 @@ def d4_outputs_gate_without_result_check(jobs: dict) -> list[Finding]:
         if not ups:
             continue
         checked = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.result", cond + _steps_text(job)))
+        sev = _d4_severity(name, job, doc or {})
         for up in sorted(ups - checked):
             found.append(Finding(
                 detector="D4",
+                severity=sev,
                 job=name,
                 title="tests silently disabled if the gating job fails",
                 detail=(f"job '{name}' runs only when '{up}' outputs say so, and nothing checks "
@@ -292,5 +331,5 @@ def scan_workflow(doc: dict) -> list[Finding]:
         return []
     out = []
     for fn in active_detectors():
-        out.extend(fn(jobs))
+        out.extend(fn(jobs, doc) if fn is d4_outputs_gate_without_result_check else fn(jobs))
     return out

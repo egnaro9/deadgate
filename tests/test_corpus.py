@@ -53,3 +53,72 @@ def test_known_good_stays_silent(path: pathlib.Path) -> None:
         f"{path.name} is a near miss and must not fire, but got "
         f"{[f'{f.detector}:{f.job}' for f in got]}"
     )
+
+
+# --- D4 severity tiering -------------------------------------------------------
+# Skipping a deploy because no release was cut is intended. Skipping the tests because
+# the path filter crashed is not. The tier has to separate them or D4 is wallpaper.
+
+import yaml as _yaml
+from deadgate.detectors import scan_workflow as _scan
+
+_PR_TEST = """
+on: [pull_request]
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs: {rust: "${{ steps.f.outputs.rust }}"}
+    steps: [{id: f, run: 'echo rust=true >> $GITHUB_OUTPUT'}]
+  test:
+    needs: [detect]
+    if: ${{ needs.detect.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    steps: [{run: cargo test}]
+"""
+
+_RELEASE_DEPLOY = """
+on:
+  push:
+    tags: ['v*']
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs: {go: "${{ steps.f.outputs.go }}"}
+    steps: [{id: f, run: 'echo go=true >> $GITHUB_OUTPUT'}]
+  publish:
+    needs: [prepare]
+    if: ${{ needs.prepare.outputs.go == 'true' }}
+    runs-on: ubuntu-latest
+    steps: [{run: npm publish}]
+"""
+
+_PR_UNCLEAR = """
+on: [pull_request]
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs: {x: "${{ steps.f.outputs.x }}"}
+    steps: [{id: f, run: 'echo x=true >> $GITHUB_OUTPUT'}]
+  widget:
+    needs: [detect]
+    if: ${{ needs.detect.outputs.x == 'true' }}
+    runs-on: ubuntu-latest
+    steps: [{run: make widget}]
+"""
+
+
+def test_d4_pr_verification_job_is_high():
+    f = [x for x in _scan(_yaml.safe_load(_PR_TEST)) if x.detector == "D4"]
+    assert f and f[0].severity == "HIGH", f
+
+
+def test_d4_release_publish_job_is_low():
+    """A tag-triggered publish that skips when no release was cut is working as intended."""
+    f = [x for x in _scan(_yaml.safe_load(_RELEASE_DEPLOY)) if x.detector == "D4"]
+    assert f and f[0].severity == "LOW", f
+
+
+def test_d4_unclear_pr_job_is_medium_not_high():
+    """When the file cannot say whether it is a check, do not claim it is."""
+    f = [x for x in _scan(_yaml.safe_load(_PR_UNCLEAR)) if x.detector == "D4"]
+    assert f and f[0].severity == "MEDIUM", f

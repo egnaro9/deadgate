@@ -19,6 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="deadgate", description=__doc__)
     ap.add_argument("path", nargs="?", default=".", help="repository root")
     ap.add_argument("--quiet", action="store_true", help="only print the summary")
+    ap.add_argument("--all", action="store_true",
+                    help="include LOW findings (release and deploy pipelines, where a skip "
+                         "is usually the intent). Hidden by default so the output stays actionable.")
     args = ap.parse_args(argv)
 
     root = pathlib.Path(args.path)
@@ -28,6 +31,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     findings = []
+    suppressed = 0
     for f in files:
         try:
             doc = yaml.safe_load(f.read_text())
@@ -37,16 +41,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"UNREADABLE {f}: {exc.__class__.__name__}", file=sys.stderr)
             return 2
         for x in scan_workflow(doc):
+            if x.severity == "LOW" and not args.all:
+                suppressed += 1
+                continue
             findings.append((f, x))
 
     if not args.quiet:
         for f, x in findings:
             rel = f.relative_to(root) if f.is_relative_to(root) else f
-            print(f"[{x.detector}] {rel}::{x.job}  {x.title}")
+            print(f"[{x.detector}/{x.severity}] {rel}::{x.job}  {x.title}")
             print(f"        {x.detail}")
             print(f"        repro: {x.repro}\n")
 
-    print(f"{len(files)} workflow file(s), {len(findings)} finding(s)")
+    tail = f", {suppressed} LOW hidden (use --all)" if suppressed else ""
+    print(f"{len(files)} workflow file(s), {len(findings)} finding(s){tail}")
     return 1 if findings else 0
 
 
