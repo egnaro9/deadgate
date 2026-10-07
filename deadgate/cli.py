@@ -10,7 +10,7 @@ import yaml
 
 from .detectors import scan_workflow
 from .protection import fetch, gh_api, repo_meta, selftest
-from .resolve import attribute, resolve
+from .resolve import attribute, resolve, workflow_is_callable
 
 
 def workflows(root: pathlib.Path):
@@ -41,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
 
     prot = None
     jobs_by_file: dict[str, dict] = {}
+    callable_files: set[str] = set()
     if args.repo:
         api = gh_api()
         ok, why = selftest(api)
@@ -72,11 +73,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"UNREADABLE {f}: {exc.__class__.__name__}", file=sys.stderr)
             return 2
         jobs_by_file[str(f)] = (doc or {}).get("jobs") or {}
+        if workflow_is_callable(doc):
+            callable_files.add(str(f))
         for x in scan_workflow(doc):
             why = ""
             if prot is not None:
                 job = ((doc or {}).get("jobs") or {}).get(x.job)
-                r = resolve(x.severity, x.job, job if isinstance(job, dict) else {}, prot)
+                r = resolve(x.severity, x.job, job if isinstance(job, dict) else {}, prot,
+                            str(f) in callable_files)
                 why = f"{r.verdict}: {r.why}"
                 if r.moved:
                     why = f"{r.structural} -> {r.severity}  {why}"
@@ -99,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(files)} workflow file(s), {len(findings)} finding(s){tail}")
 
     if prot is not None and prot.required:
-        att = attribute(prot, jobs_by_file)
+        att = attribute(prot, jobs_by_file, frozenset(callable_files))
         print(f"required checks: {len(att.attributed)}/{len(att.required)} attributed to a job "
               f"in this repository")
         if att.unattributed:

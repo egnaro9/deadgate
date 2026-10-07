@@ -100,33 +100,64 @@ workflow files per repository, alphabetically, so Comfy-Org/ComfyUI's `ruff.yml`
 Homebrew/homebrew-core loses `tap_syntax` the same way. The cap used to print nothing, which
 read as full coverage; it now reports how many files it did not fetch.
 
-### Seven fail-opens the corpus could not see
+### Fifteen fail-opens, and what a corpus could not see
 
-An adversarial review of this tier, four independent lenses with each finding verified by
-reproduction, found seven ways it could clear a finding on information it had not obtained.
-Six are fixed; all are pinned by a test proved to fail by planting the defect back.
+An adversarial review of this tier, four independent lenses with every finding verified by
+reproduction, claimed 19 defects and confirmed 15. The previous version of this section said
+seven. That number was written while the review was still running and is superseded; it was
+the count in hand, reported as though it were the count.
 
-- a matrixed reusable call names its checks `caller (values) / callee`, but `uses:` was
-  checked before the matrix, so every one of them matched nothing
+All 15 are fixed, each pinned by a test proved to fail by planting the defect back. The ones
+that mattered came from live check-run names and required-check sets, not from reading code:
+
+- **A static `name:` with a matrix IS suffixed with the leg values.** The module documented and
+  enforced the opposite, that the name is used once verbatim, so every leg of such a job matched
+  nothing. promptfoo's `main` branch requires the context `Check Python (3.9)` while its
+  workflow declares a static `name: Check Python`. The complementary rule holds and is why this
+  survived: `Build on Node ${{ matrix.node }}`, whose name already references the matrix, is
+  required as the unsuffixed `Build on Node 24.x`.
+- **A workflow that declares `on: workflow_call` cannot name its own checks.** When another
+  workflow `uses:` it, GitHub names the check `<caller job> / <this job>`. Deriving the
+  unprefixed name cleared findings on jobs that were required merge gates, a two-step error in
+  the clearing direction since the truth was REQUIRED. Worse, the attribution check could not
+  see it: the caller's own prefix credited those contexts, so the run printed
+  `required checks: 2/2 attributed` while the finding was hidden. Such jobs are now AMBIGUOUS.
+- a matrixed reusable call is named `caller (values) / callee`, and `uses:` was checked before
+  the matrix, so none of them matched
 - a job SKIPPED by its job-level `if:` emits one check run carrying the RAW `name:` template,
-  expressions left literal and no matrix expansion. Skipped jobs are this tool's entire target
-  population
-- YAML booleans were rendered `True`/`False` by Python where GitHub renders `true`/`false`
-- `include`/`exclude` legs were absent from the expanded name set while confidence stayed EXACT
+  expressions left literal. Confirmed live on two repositories
+- YAML booleans rendered `True`/`False` where GitHub renders `true`/`false`
 - GitHub trims the rendered check name; the expansion did not
-- a branch that does not exist answers 404 exactly like an unprotected one, so a typo in
-  `--branch` cleared every finding in the repository
-- 429, GitHub's secondary rate limit, was classified as a permission boundary, marking a
-  retryable outage permanently unreadable
+- `include`/`exclude` legs were absent while confidence stayed EXACT
+- completeness was granted without confirming the branch exists whenever any check was
+  required, and rulesets can return pattern-matched organisation rules for a branch that is
+  not there, so a typo in `--branch` could still reach NOT_REQUIRED
+- a classic 200 whose body is null, a list or a number counted as a successful read
+- 429, GitHub's secondary rate limit, was classified as a permission boundary
+- four guards had no test at all, so deleting them changed nothing that was measured
 
-Re-running the corpus after fixing them produced **identical numbers**: 11 escalations, 109
-attributed, 126 unattributed. That is the point worth keeping. None of these defects were
-reachable from a corpus of workflow files, because the evidence that exposes them is what
-GitHub actually named the check runs. A measurement can be stable and still be measuring past
-the bug.
+### What the fixes did to the numbers
 
-The remaining issue is rulesets pagination. `per_page=100` now covers it, but `gh api` does
-not paginate, so a branch with more than 100 rules would still truncate.
+```
+                     before fixes      after fixes
+REQUIRED verdicts              63               34
+AMBIGUOUS                     844              873
+contexts attributed           109              106
+repos with zero matches        21               24
+MEDIUM -> HIGH                 11               11
+```
+
+The escalations are unchanged and everything else moved toward caution, which is the shape a
+soundness fix should have. Half the REQUIRED verdicts were being claimed on derivations that
+could not support them.
+
+The first round of fixes, before the callee defect was known, produced numbers **identical** to
+the unfixed run. That is the part worth keeping. A corpus of workflow files cannot see any of
+this, because the evidence that exposes it is what GitHub actually named the check runs. A
+measurement can be stable, reproducible, hash-pinned, and still be measuring past the bug.
+
+Residual: `gh api` does not paginate, so `per_page=100` covers rulesets but a branch with more
+than 100 rules would truncate.
 
 ## What a corpus measurement cannot tell you
 

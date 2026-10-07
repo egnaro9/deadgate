@@ -134,10 +134,14 @@ def fetch(repo: str, branch: str, api, admin: bool = False) -> Protection:
 
     status, data = api(f"repos/{repo}/branches/{branch}/protection")
     classic_ok = False
-    if status == 200:
+    if status == 200 and isinstance(data, dict):
         classic_ok = True
         sources.append("classic")
         required |= _classic_required(data)
+    elif status == 200:
+        # A 200 whose body is null, a list, or a number is not a protection object. Counting
+        # it as a successful read made an unparseable response look like "nothing required".
+        notes.append("classic HTTP 200 with a body that is not a protection object")
     elif status == 404 and admin:
         # With admin, 404 is the documented answer for an unprotected branch.
         classic_ok = True
@@ -151,20 +155,21 @@ def fetch(repo: str, branch: str, api, admin: bool = False) -> Protection:
         notes.append(f"classic {reason}")
 
     complete = rules_ok and classic_ok
+    if complete:
+        # `complete` is the only licence this tier has to say NOT_REQUIRED, so confirm the
+        # branch exists before granting it. A branch that is not there answers 404 on the
+        # classic endpoint exactly like an unprotected one, and rulesets can still return
+        # pattern-matched org rules for it, so even a non-empty required set does not prove
+        # the branch is real. Checking this only when the set was empty left that open.
+        status, _ = api(f"repos/{repo}/branches/{branch}")
+        if status != 200:
+            complete = False
+            notes.append(f"branch {branch!r} did not confirm ({classify(status, None)}), so "
+                         "absence of a match proves nothing")
     if required:
         state = PROTECTED
     elif complete:
-        # Before clearing every finding in the repository, confirm the branch is real. A
-        # branch that does not exist answers 404 on the classic endpoint exactly like an
-        # unprotected one, so a typo in --branch would read as "nothing is required here".
-        status, _ = api(f"repos/{repo}/branches/{branch}")
-        if status == 200:
-            state = UNPROTECTED
-        else:
-            state = UNREADABLE
-            complete = False
-            notes.append(f"branch {branch!r} did not confirm ({classify(status, None)}), so "
-                         "'unprotected' is not a conclusion to draw")
+        state = UNPROTECTED
     else:
         state = UNREADABLE
     return Protection(state, frozenset(required), complete, tuple(sources), "; ".join(notes),

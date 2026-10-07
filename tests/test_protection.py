@@ -8,7 +8,7 @@ from deadgate.checknames import AMBIGUOUS, EXACT, derive
 from deadgate.protection import (PROTECTED, Protection, UNPROTECTED, UNREADABLE, fetch,
                                  parse_response, repo_meta, selftest)
 from deadgate.resolve import (AMBIGUOUS as R_AMBIGUOUS, NOT_REQUIRED, REQUIRED, attribute,
-                              resolve)
+                              resolve, workflow_is_callable)
 
 RULES = "rules/branches"
 CLASSIC = "/protection"
@@ -102,8 +102,17 @@ def test_both_rule_sources_merge():
     # A computed matrix still names its legs `base (...)`, so the prefix stays decidable.
     ("test", {"strategy": {"matrix": "${{ fromJson(needs.x.outputs.y) }}"}}, "test (99)", True),
     ("t", {"name": "Unit tests"}, "Unit tests", True),
-    # An explicit name is used verbatim for every leg, NOT suffixed with the matrix values.
-    ("t", {"name": "Unit", "strategy": {"matrix": {"os": ["a"]}}}, "Unit (a)", False),
+    # A static name IS suffixed with the leg values. Verified on the authoritative surface:
+    # promptfoo's main branch requires the context `Check Python (3.9)` while its workflow
+    # declares a static `name: Check Python` over a python-version matrix. The opposite rule
+    # was asserted here first, and it made every leg of such a job match nothing.
+    ("t", {"name": "Unit", "strategy": {"matrix": {"os": ["a"]}}}, "Unit (a)", True),
+    ("t", {"name": "Unit", "strategy": {"matrix": {"os": ["a"]}}}, "Unit", True),
+    ("t", {"name": "Unit"}, "Unit (a)", False),
+    # A name that already references the matrix is NOT suffixed: promptfoo's
+    # `Build on Node ${{ matrix.node }}` is required as the bare `Build on Node 24.x`.
+    ("t", {"name": "Build on Node ${{ matrix.node }}", "strategy": {"matrix": {"node": ["24.x"]}}},
+     "Build on Node 24.x", True),
     ("t", {"name": "Unit ${{ matrix.os }}", "strategy": {"matrix": {"os": ["a"]}}}, "Unit a", True),
     ("call", {"uses": "./.github/workflows/r.yml"}, "call / build", True),
     # A SKIPPED reusable call emits the bare caller name with no callee suffix, so asserting
@@ -314,3 +323,60 @@ def test_rules_request_asks_for_more_than_one_page():
 
     fetch("o/r", "main", spy)
     assert any("per_page=100" in p for p in seen if RULES in p)
+
+
+# ---------------------------------------------------------------- the callee-naming blind spot
+
+def test_a_uses_callable_workflow_cannot_name_its_own_checks():
+    """When another workflow `uses:` this one, GitHub names the check `<caller> / <job>`, and
+    the caller is not knowable from this file. Naming it unprefixed cleared findings on jobs
+    that WERE required gates, and the attribution check could not see it: the caller's own
+    prefix credited those contexts, so `suspicious` stayed False while the finding was hidden."""
+    d = derive("build", {}, workflow_callable=True)
+    assert d.confidence == AMBIGUOUS
+    p = Protection(PROTECTED, frozenset({"call-ci / build"}), True, ("classic", "rulesets"))
+    assert resolve("MEDIUM", "build", {}, p, workflow_callable=True).severity == "MEDIUM"
+    # and without the flag it would have been cleared, which is the defect
+    assert resolve("MEDIUM", "build", {}, p).severity == "LOW"
+
+
+@pytest.mark.parametrize("on,expected", [
+    ("workflow_call", True),
+    (["workflow_call", "push"], True),
+    ({"workflow_call": None, "pull_request": None}, True),
+    ({"pull_request": None}, False),
+    (None, False),
+])
+def test_workflow_is_callable(on, expected):
+    assert workflow_is_callable({"on": on} if on is not None else {}) is expected
+
+
+# ---------------------------------------------------------------- completeness gating
+
+def test_completeness_requires_a_confirmed_branch_even_when_checks_are_required():
+    """Rulesets can return pattern-matched org rules for a branch that does not exist, so a
+    non-empty required set does not prove the branch is real. Confirming existence only when
+    the set was empty left NOT_REQUIRED reachable on a typo."""
+    p = fetch("o/r", "typo", api3(req("test"), (200, {"required_status_checks": {"contexts": []}}),
+                                  (404, {"message": "Branch not found"})), admin=True)
+    assert p.state == PROTECTED and not p.complete
+    assert resolve("MEDIUM", "other", {}, p).severity == "MEDIUM"
+
+
+@pytest.mark.parametrize("body", [None, [], 0, ""])
+def test_a_classic_200_that_is_not_a_protection_object_is_not_a_read(body):
+    """`_classic_required` returns an empty set for any of these, so counting the response as
+    a successful read turned an unparseable 200 into 'nothing is required here'."""
+    p = fetch("o/r", "main", api3((200, []), (200, body), (200, {"name": "main"})), admin=True)
+    assert p.state == UNREADABLE and not p.complete
+
+
+def test_a_non_list_rulesets_payload_is_not_an_empty_rule_set():
+    p = fetch("o/r", "main", api3((200, {"message": "nope"}), (403, {}), (200, {"name": "main"})))
+    assert p.state == UNREADABLE and not p.complete
+
+
+def test_a_computed_matrix_value_cannot_be_enumerated():
+    """Without the guard, derive() would claim EXACT over a literal '${{ ... }}' value."""
+    d = derive("t", {"name": "x ${{ matrix.v }}", "strategy": {"matrix": {"v": ["${{ env.A }}"]}}})
+    assert d.confidence == AMBIGUOUS

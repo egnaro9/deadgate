@@ -34,13 +34,14 @@ class Resolution:
         return self.severity != self.structural
 
 
-def resolve(severity: str, job_key: str, job: dict, prot: Protection) -> Resolution:
+def resolve(severity: str, job_key: str, job: dict, prot: Protection,
+            workflow_callable: bool = False) -> Resolution:
     keep = lambda verdict, why: Resolution(verdict, severity, severity, why)
 
     if prot.state == UNREADABLE:
         return keep(UNREADABLE, f"could not read what this branch requires ({prot.detail})")
 
-    d = derive(job_key, job)
+    d = derive(job_key, job, workflow_callable)
     if d.confidence == DERIVE_AMBIGUOUS:
         return keep(AMBIGUOUS, f"cannot derive this job's check name: {d.reason}")
 
@@ -82,13 +83,26 @@ class Attribution:
         return bool(self.required) and not self.attributed
 
 
-def attribute(prot: Protection, jobs_by_file: dict[str, dict]) -> Attribution:
+def workflow_is_callable(doc: dict | None) -> bool:
+    """Does this workflow declare `on: workflow_call`?"""
+    on = (doc or {}).get("on", (doc or {}).get(True))
+    if isinstance(on, str):
+        return on == "workflow_call"
+    if isinstance(on, list):
+        return "workflow_call" in on
+    if isinstance(on, dict):
+        return "workflow_call" in on
+    return False
+
+
+def attribute(prot: Protection, jobs_by_file: dict[str, dict],
+              callable_files: frozenset[str] = frozenset()) -> Attribution:
     """`jobs_by_file` maps a workflow path to that file's `jobs` mapping."""
     hits: dict[str, list[str]] = {}
     undecidable: list[str] = []
     for path, jobs in jobs_by_file.items():
         for key, job in (jobs or {}).items():
-            d = derive(key, job if isinstance(job, dict) else {})
+            d = derive(key, job if isinstance(job, dict) else {}, path in callable_files)
             if d.confidence == DERIVE_AMBIGUOUS:
                 undecidable.append(f"{path}::{key}")
                 continue
