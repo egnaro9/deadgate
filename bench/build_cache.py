@@ -22,7 +22,10 @@ for r in pinned:
         manifest.append({**r,"files":[p.name for p in d.glob('*.y*ml')]}); n_repo+=1; continue
     listing=gh(["api",f"repos/{full}/contents/.github/workflows","--jq",".[].name"])
     if not listing: continue
-    names=[x for x in listing.split() if x.endswith(('.yml','.yaml'))][:12]
+    found=[x for x in listing.split() if x.endswith(('.yml','.yaml'))]
+    names=found[:PER_REPO_CAP]
+    dropped=len(found)-len(names)
+    if dropped: n_dropped+=dropped; capped.append(f"{full} (+{dropped})")
     if not names: continue
     d.mkdir(parents=True, exist_ok=True)
     got=[]
@@ -36,3 +39,9 @@ json.dump(manifest, open(CACHE.parent/"cache_manifest.json","w"), indent=1)
 h=hashlib.sha256()
 for p in sorted(cache.rglob('*.y*ml')): h.update(p.read_bytes())
 print(f"DONE {n_repo} repos, {n_file} files. corpus sha256={h.hexdigest()[:16]}")
+# Say what was left out. A cap that prints nothing reads as "everything was covered", and
+# this one measurably inflated the count of required checks that matched no job.
+if n_dropped:
+    print(f"CAPPED at {PER_REPO_CAP} files/repo: {n_dropped} workflow file(s) NOT fetched "
+          f"across {len(capped)} repo(s). Attribution is measured against a subset.")
+    print("  " + ", ".join(capped[:6]) + (" ..." if len(capped) > 6 else ""))

@@ -51,6 +51,64 @@ the corpus was green**:
 Both were found by running against a real 25k-star repository, not by the suite. That is the
 argument this tool makes about everyone else's checks, so it is held to it too.
 
+## The branch-protection tier
+
+The structural tier reads workflow files and reports the SHAPE of a dead gate. It cannot tell
+you whether anything was relying on the job. That needs the branch's required status checks:
+
+```bash
+deadgate . --repo owner/name            # read-only GitHub API calls via `gh`
+```
+
+Two endpoints answer, and they do not have the same reach:
+
+| endpoint | access needed | what it covers |
+|---|---|---|
+| `GET /repos/{o}/{r}/rules/branches/{b}` | read | rulesets only |
+| `GET /repos/{o}/{r}/branches/{b}/protection` | **admin** | classic protection |
+
+On a repository you do not administer, only the first answers. It says nothing about classic
+protection, so an empty result does not mean the branch is unprotected. That asymmetry decides
+what the tier is allowed to claim:
+
+- a **match proves** the check is required, so a MEDIUM finding escalates to HIGH
+- **no match proves nothing** unless the required set is complete, which needs admin on both
+  endpoints. Without that, the verdict is AMBIGUOUS and the severity does not move
+
+Only MEDIUM moves. MEDIUM is the tier that means "the workflow file does not say", so it is the
+only one this evidence can settle. A structural HIGH keeps its severity even when a check is not
+required, because protection can be added later and may be configured where this API does not
+reach. A structural LOW keeps its severity because a release pipeline that skips on purpose does
+not become a merge gate by appearing in a list.
+
+### Verdicts
+
+| verdict | meaning | severity |
+|---|---|---|
+| `REQUIRED` | a derived check name matches a required context | MEDIUM becomes HIGH |
+| `NOT_REQUIRED` | complete required set, no match | MEDIUM becomes LOW |
+| `UNPROTECTED` | complete, and the branch requires nothing at all | MEDIUM becomes LOW |
+| `AMBIGUOUS` | the name could not be derived, or the set is incomplete | unchanged |
+| `UNREADABLE` | the API did not answer | unchanged |
+
+### Why it reports contexts it could not attribute
+
+A required status check is identified by its **check-run name**, which is not the job key in the
+YAML. If name derivation breaks, no required context matches any job, every MEDIUM resolves to
+"not required", and the tool quietly downgrades real defects. So the run prints how many required
+contexts it attributed to a job in the repository, and warns when none of them matched anything.
+A broken matcher then appears as a number rather than as silence. Some contexts land there
+legitimately, from third-party apps or workflows outside the repository, so it is a signal to
+read and not an assertion.
+
+Two transport facts are enforced rather than trusted, because both were observed:
+
+- `403` is returned for rate limiting **and** for insufficient permissions. These are separated,
+  because one is retryable and the other means this tier cannot help on that repository.
+- `404` from the classic endpoint means "not protected" for a branch you administer and "you
+  cannot see this" otherwise, with the same status code and only the prose differing. So it is
+  gated on `permissions.admin`, never on the message text.
+
 ## Measurements
 
 Figures, and the unit each one is in, are in [MEASUREMENT.md](MEASUREMENT.md). Reproduce them
