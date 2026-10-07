@@ -122,3 +122,82 @@ def test_d4_unclear_pr_job_is_medium_not_high():
     """When the file cannot say whether it is a check, do not claim it is."""
     f = [x for x in _scan(_yaml.safe_load(_PR_UNCLEAR)) if x.detector == "D4"]
     assert f and f[0].severity == "MEDIUM", f
+
+
+# --- D1 and D3 tiering ---------------------------------------------------------
+
+_D1_PR_TEST = """
+on: [pull_request]
+jobs:
+  heavy:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps: [{run: pytest -m slow}]
+  test:
+    needs: [heavy]
+    runs-on: ubuntu-latest
+    steps: [{run: echo done}]
+"""
+
+_D1_RELEASE = """
+on:
+  push:
+    tags: ['v*']
+jobs:
+  prep:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps: [{run: make prep}]
+  publish:
+    needs: [prep]
+    runs-on: ubuntu-latest
+    steps: [{run: npm publish}]
+"""
+
+_D3_EXPORTED = """
+on: [pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute coverage
+        run: |
+          COV=$(coverage report | tail -1)
+          echo "cov=$COV" >> "$GITHUB_OUTPUT"
+"""
+
+_D3_CLEANUP = """
+on: [pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log the tree
+        run: ls -la | head -40
+"""
+
+
+def _of(doc_text, det):
+    return [x for x in _scan(_yaml.safe_load(doc_text)) if x.detector == det]
+
+
+def test_d1_pr_verification_is_high():
+    f = _of(_D1_PR_TEST, "D1")
+    assert f and f[0].severity == "HIGH", f
+
+
+def test_d1_release_pipeline_is_low():
+    f = _of(_D1_RELEASE, "D1")
+    assert f and f[0].severity == "LOW", f
+
+
+def test_d3_exported_result_is_high():
+    """The masked value leaves the step, so something downstream consumes it."""
+    f = _of(_D3_EXPORTED, "D3")
+    assert f and f[0].severity == "HIGH", f
+
+
+def test_d3_fire_and_forget_is_not_high():
+    """A logging pipeline masks nothing anybody reads."""
+    f = _of(_D3_CLEANUP, "D3")
+    assert f and f[0].severity == "MEDIUM", f

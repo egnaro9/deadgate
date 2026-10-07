@@ -75,7 +75,10 @@ def _steps_text(job: dict) -> str:
     # The job-level if: is a result check too. A job guarded by
     # `if: always() && needs.x.outputs.y` IS reading its upstream, and missing this
     # was a LEAKY bug found by running against real workflows, not by the corpus.
-    out.append(str(job.get("if") or ""))
+    # Behind NAIVE so the flag reproduces the pre-fix behaviour rather than quietly
+    # keeping the fix in both arms, which made an A/B report a difference of zero.
+    if not NAIVE:
+        out.append(str(job.get("if") or ""))
     return "\n".join(out)
 
 
@@ -108,7 +111,7 @@ def d2_fanin_without_result_check(jobs: dict) -> list[Finding]:
     return found
 
 
-def d1_skippable_upstream(jobs: dict) -> list[Finding]:
+def d1_skippable_upstream(jobs: dict, doc: dict | None = None) -> list[Finding]:
     """A conditional job that something depends on, where the dependent never checks the result.
 
     GitHub documents that a skipped job reports Success and does not prevent a merge even
@@ -118,9 +121,11 @@ def d1_skippable_upstream(jobs: dict) -> list[Finding]:
     found = []
     conditional = {n for n, j in jobs.items()
                    if isinstance(j, dict) and _skip_prone(j.get("if"))}
-    # A dependent whose own if: reads the upstream's outputs is deliberately gated on it.
-    # That is the change-detection pattern, it is intentional, and D4 covers its real
-    # failure mode. Measured: it was 17 of 20 sampled D1 findings, i.e. most of the noise.
+    # A dependent whose own if: reads the upstream's outputs is deliberately gated on it:
+    # the change-detection pattern, which is intentional, and whose real failure mode is
+    # D4's. That exclusion happens in _steps_text, which reads the job-level if:. An
+    # explicit second check here was DEAD CODE and is removed; the A/B that was supposed
+    # to prove it worked reported a difference of exactly zero and found it instead.
     for name, job in jobs.items():
         if not isinstance(job, dict):
             continue
@@ -134,11 +139,11 @@ def d1_skippable_upstream(jobs: dict) -> list[Finding]:
         text = _steps_text(job)
         if re.search(r"needs\.[A-Za-z0-9_\-]+\.(result|outputs)", text):
             continue
-        if not NAIVE and re.search(r"needs\.[A-Za-z0-9_\-]+\.outputs\.", str(job.get("if") or "")):
-            continue
+        sev = _gate_severity(name, job, doc or {})
         for up in skippable:
             found.append(Finding(
                 detector="D1",
+                severity=sev,
                 job=name,
                 title="gate satisfied by a skipped job",
                 detail=(f"job '{name}' depends on '{up}', which is conditional. A skipped job "
@@ -197,7 +202,28 @@ def _result_is_emptiness_checked(var: str, body: str) -> bool:
     return bool(re.search(rf"-[zn]\s+\"?\$\{{?{re.escape(var)}\}}?", body))
 
 
-def d3_pipe_masked_exit(jobs: dict) -> list[Finding]:
+def _d3_severity(step: dict, job_name: str, job: dict, doc: dict, line: str) -> str:
+    """Does the masked exit status actually decide anything?
+
+    A pipeline whose result is exported, or which sits in a step that can fail the build,
+    masks a decision. A pipeline in a cleanup or logging step masks nothing anybody reads.
+    Tracing twenty D3 findings by hand, the ones that mattered all had a consumer and the
+    ones that did not were fire-and-forget.
+    """
+    body = str(step.get("run") or "")
+    if not _on_pull_request(doc):
+        return "LOW"
+    exported = "GITHUB_OUTPUT" in body or "GITHUB_ENV" in body
+    decides = bool(re.search(r"\bexit\s+[1-9]|::error::", body))
+    assigned = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)=", line)
+    consumed = bool(assigned and re.search(rf"\$\{{?{re.escape(assigned.group(1))}\b",
+                                           body.replace(line, "", 1)))
+    if decides or exported or consumed:
+        return "HIGH"
+    return "MEDIUM"
+
+
+def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
     """A run: step whose exit status is the LAST command in a pipe, with no pipefail.
 
     The step's status reports the filter's success, not the real command's. An outage
@@ -230,6 +256,7 @@ def d3_pipe_masked_exit(jobs: dict) -> list[Finding]:
                     label = step.get("name") or line[:40]
                     found.append(Finding(
                         detector="D3",
+                        severity=_d3_severity(step, name, job, doc or {}, line),
                         job=name,
                         title="exit status masked by a pipe",
                         detail=(f"step '{label}' in job '{name}' ends a pipeline with "
@@ -267,7 +294,7 @@ def _on_pull_request(doc: dict) -> bool:
     return False
 
 
-def _d4_severity(job_name: str, job: dict, doc: dict) -> str:
+def _gate_severity(job_name: str, job: dict, doc: dict) -> str:
     name = f"{job_name} {job.get('name') or ''}"
     if _SHIP_JOB.search(name) and not _CHECK_JOB.search(name):
         return "LOW"          # a release step, where skipping is usually the intent
@@ -301,7 +328,7 @@ def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) ->
         if not ups:
             continue
         checked = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.result", cond + _steps_text(job)))
-        sev = _d4_severity(name, job, doc or {})
+        sev = _gate_severity(name, job, doc or {})
         for up in sorted(ups - checked):
             found.append(Finding(
                 detector="D4",
@@ -331,5 +358,5 @@ def scan_workflow(doc: dict) -> list[Finding]:
         return []
     out = []
     for fn in active_detectors():
-        out.extend(fn(jobs, doc) if fn is d4_outputs_gate_without_result_check else fn(jobs))
+        out.extend(fn(jobs, doc) if fn is not d2_fanin_without_result_check else fn(jobs))
     return out
