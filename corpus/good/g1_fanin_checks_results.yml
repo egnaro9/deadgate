@@ -1,0 +1,21 @@
+# NEAR MISS of b1: same shape, but it reads needs.*.result. Modelled on promptfoo examples.yml.
+name: CI
+on: [pull_request]
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    steps: [{run: make select}]
+  test:
+    runs-on: ubuntu-latest
+    steps: [{run: make test}]
+  result:
+    name: Examples
+    needs: [select, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful selection and every selected test
+        env:
+          SELECTION_RESULT: ${{ needs.select.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: python3 gate.py

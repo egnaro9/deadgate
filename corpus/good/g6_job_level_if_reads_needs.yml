@@ -1,0 +1,21 @@
+# SILENT: D1
+# NEAR MISS: the job guards ITSELF with a job-level if: that reads needs.*.outputs.
+# Scoped to D1 deliberately. D4 DOES fire here and is right to: if release-please
+# fails its outputs are unset and build skips reporting Success. Whether that is a
+# defect depends on context (skipping a release build is intended; skipping TESTS is
+# not), and the workflow file alone cannot tell them apart. Recorded, not hidden.
+# This is the real release-please shape. A detector that ignores job-level if: is LEAKY.
+name: release
+on: [push]
+jobs:
+  release-please:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps: [{run: make release}]
+  build:
+    needs: [release-please]
+    if: >-
+      ${{ always() && needs.release-please.outputs.releases_created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: make build

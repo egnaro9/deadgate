@@ -1,0 +1,11 @@
+# NEAR MISS of b2: a conditional job, but no job depends on it, so no gate is implied.
+name: CI
+on: [pull_request]
+jobs:
+  optional-bench:
+    if: contains(github.event.pull_request.labels.*.name, 'bench')
+    runs-on: ubuntu-latest
+    steps: [{run: make bench}]
+  test:
+    runs-on: ubuntu-latest
+    steps: [{run: pytest}]

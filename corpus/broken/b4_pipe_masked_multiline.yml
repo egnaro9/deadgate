@@ -1,0 +1,11 @@
+# EXPECT: D3
+name: CI
+on: [push]
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan
+        run: |
+          echo starting
+          npm audit --json | jq '.metadata.vulnerabilities.high'

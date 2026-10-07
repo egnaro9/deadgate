@@ -1,0 +1,13 @@
+# NEAR MISS: the pipe lives inside $( ) whose head is `echo` of a literal, which cannot
+# fail, so nothing is masked. Real shape, seen 10 times in one repository during the
+# 2026-10-06 survey. A detector that flags this is mostly noise.
+name: CI
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set short sha
+        run: |
+          echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+          echo "SHORT_SHA=$(echo abc123def456 | cut -c1-7)" >> $GITHUB_ENV

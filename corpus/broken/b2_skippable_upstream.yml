@@ -1,0 +1,13 @@
+# EXPECT: D1
+name: CI
+on: [pull_request]
+jobs:
+  heavy-tests:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps: [{run: pytest -m slow}]
+  gate:
+    needs: [heavy-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "gate passed"

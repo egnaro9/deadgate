@@ -1,0 +1,11 @@
+# NEAR MISS of b3: a pipeline, but pipefail is set.
+name: CI
+on: [pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check endpoint
+        run: |
+          set -euo pipefail
+          curl -s https://example.test/health | grep -q ok

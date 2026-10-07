@@ -1,0 +1,13 @@
+# EXPECT: D2
+name: CI
+on: [pull_request]
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps: [{run: make a}]
+  summary:
+    needs: [a]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo done

@@ -1,0 +1,12 @@
+# NEAR MISS of b3: a pipe whose FINAL command is the real assertion and whose
+# upstream cannot fail meaningfully (a literal), so the status is honest.
+name: CI
+on: [push]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert config shape
+        run: |
+          set -o pipefail
+          cat config.json | jq -e '.version'

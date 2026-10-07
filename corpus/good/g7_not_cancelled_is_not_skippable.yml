@@ -1,0 +1,14 @@
+# NEAR MISS: upstream is guarded by !cancelled(), which RUNS in normal operation and on
+# failure. Treating it as skip-prone is a false alarm. Real shape from promptfoo main.yml.
+name: CI
+on: [pull_request]
+jobs:
+  package-acceptance:
+    needs: package-build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps: [{run: make accept}]
+  sbom-comparison:
+    needs: [package-acceptance]
+    runs-on: ubuntu-latest
+    steps: [{run: make sbom}]

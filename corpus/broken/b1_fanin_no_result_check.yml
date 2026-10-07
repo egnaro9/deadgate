@@ -1,0 +1,17 @@
+# EXPECT: D2
+name: CI
+on: [pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps: [{run: pytest}]
+  lint:
+    runs-on: ubuntu-latest
+    steps: [{run: ruff check .}]
+  gate:
+    name: All checks
+    needs: [test, lint]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "all good"

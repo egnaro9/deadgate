@@ -1,0 +1,13 @@
+# NEAR MISS of b5: if: always() on a STEP for cleanup, not a job-level fan-in gate.
+# Taken from the real shape in promptfoo main.yml and docker.yml.
+name: CI
+on: [push]
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./start-server.sh
+      - run: npm run e2e
+      - name: Stop local server
+        if: always()
+        run: ./stop-server.sh

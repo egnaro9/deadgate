@@ -1,0 +1,22 @@
+[project]
+name = "deadgate"
+version = "0.1.0"
+description = "Find CI checks that cannot fail."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Erik Hill" }]
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+deadgate = "deadgate.cli:main"
+
+[project.urls]
+Repository = "https://github.com/egnaro9/deadgate"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["deadgate*"]
