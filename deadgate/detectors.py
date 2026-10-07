@@ -82,6 +82,21 @@ def _steps_text(job: dict) -> str:
     return "\n".join(out)
 
 
+# GitHub's documented fan-in idiom is the WILDCARD form, `needs.*.result`, which is how a
+# gate asks about every upstream at once. The detectors below originally matched only
+# `needs.<name>.result` via [A-Za-z0-9_-]+, which cannot match "*", so a correctly written
+# gate was reported as a gate that cannot fail. The message even said "never reads
+# needs.*.result" while failing to match that exact string. Measured on Arize-ai/openinference,
+# whose three `ci-required` jobs all read it twice: seven HIGH findings, every one false.
+_NEEDS_READ = re.compile(r"needs\.(?:\*|[A-Za-z0-9_\-]+)\.(?:result|outputs)")
+_NEEDS_WILDCARD_RESULT = re.compile(r"needs\.\*\.result")
+
+
+def _reads_any_upstream_state(text: str) -> bool:
+    """True when the text consults any upstream's result or outputs, wildcard included."""
+    return _NEEDS_READ.search(text) is not None
+
+
 def d2_fanin_without_result_check(jobs: dict) -> list[Finding]:
     """A fan-in job that runs on always() and never reads needs.*.result.
 
@@ -96,7 +111,7 @@ def d2_fanin_without_result_check(jobs: dict) -> list[Finding]:
         if not needs or not _truthy_always(job.get("if")):
             continue
         text = _steps_text(job)
-        if re.search(r"needs\.[A-Za-z0-9_\-]+\.(result|outputs)", text):
+        if _reads_any_upstream_state(text):
             continue
         upstream = ", ".join(needs) if isinstance(needs, list) else str(needs)
         found.append(Finding(
@@ -137,7 +152,7 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None) -> list[Finding]:
         if not skippable:
             continue
         text = _steps_text(job)
-        if re.search(r"needs\.[A-Za-z0-9_\-]+\.(result|outputs)", text):
+        if _reads_any_upstream_state(text):
             continue
         sev = _gate_severity(name, job, doc or {})
         for up in skippable:
@@ -305,6 +320,36 @@ def _gate_severity(job_name: str, job: dict, doc: dict) -> str:
     return "MEDIUM"
 
 
+def _needs_of(job) -> list[str]:
+    n = job.get("needs") if isinstance(job, dict) else None
+    if not n:
+        return []
+    return list(n) if isinstance(n, list) else [str(n)]
+
+
+def _jobs_covered_by_a_wildcard_gate(jobs: dict) -> set[str]:
+    """Jobs whose FAILURE is already caught by a fan-in gate in the same workflow.
+
+    D4's premise is that a failed gating job skips its dependents and the skip reports
+    Success, so the merge is green with nothing tested. That premise needs the failure to
+    reach nobody. A job running on always() that reads `needs.*.result` sees the failure of
+    every job it needs, directly or transitively, so for those jobs the premise is false and
+    the finding is noise.
+
+    Measured on Arize-ai/openinference: five D4 findings, three of them HIGH, in four
+    workflows that each carry exactly such a gate. Reported in isolation they read as "the
+    merge is green with nothing tested", and the merge is not green.
+    """
+    covered: set[str] = set()
+    for name, job in jobs.items():
+        if not isinstance(job, dict) or not _truthy_always(job.get("if")):
+            continue
+        if not _NEEDS_WILDCARD_RESULT.search(_steps_text(job)):
+            continue
+        covered |= set(_needs_of(job))
+    return covered
+
+
 def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) -> list[Finding]:
     """A job gated on an upstream's OUTPUTS, with nothing checking that upstream SUCCEEDED.
 
@@ -327,9 +372,14 @@ def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) ->
         ups = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.outputs\.", cond))
         if not ups:
             continue
-        checked = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.result", cond + _steps_text(job)))
+        blob = cond + _steps_text(job)
+        checked = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.result", blob))
+        if _NEEDS_WILDCARD_RESULT.search(blob):
+            # `needs.*.result` asks about EVERY upstream, so it checks all of them at once.
+            # Expanding it is the difference between a correct gate and a reported one.
+            checked |= ups
         sev = _gate_severity(name, job, doc or {})
-        for up in sorted(ups - checked):
+        for up in sorted(ups - checked - _jobs_covered_by_a_wildcard_gate(jobs)):
             found.append(Finding(
                 detector="D4",
                 severity=sev,

@@ -12,8 +12,15 @@ CACHE = pathlib.Path(os.environ.get("DEADGATE_CACHE", "wfcache"))
 def gh(a):
     p=subprocess.run(["gh"]+a,capture_output=True,text=True)
     return p.stdout if p.returncode==0 else None
+# Files per repo, which MEASUREMENT.md quotes as 12. These three names were USED below and
+# never defined, so the script this repository ships raised NameError on its first uncached
+# repo and the documented reproduction command could not run at all. The published figures
+# therefore came from a version that is not the one here. Found by running it.
+PER_REPO_CAP = 12
+
 pinned=json.load(open(HERE/"pinned_repos.json"))
 cache=CACHE; n_repo=n_file=0
+n_dropped=0; capped=[]
 manifest=[]
 for r in pinned:
     full=r['repo']; slug=full.replace('/','__')

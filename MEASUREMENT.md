@@ -22,11 +22,77 @@ once and every detector configuration reads identical bytes; compare two arms on
 
 ## Headline
 
+Corpus rebuilt 2026-10-07: **275 repositories, 2047 workflow files, `sha256 efdf65ce734cd293`.**
+The figures published before that date were from a cache that no longer exists AND could not be
+rebuilt, because `bench/build_cache.py` raised `NameError` on three names it used and never
+defined. The documented reproduction command had therefore never run in the form this
+repository shipped, so those numbers came from a script that is not the one here. They are
+withdrawn rather than carried forward; see "The detectors were blind to the documented idiom".
+
 ```
-CURRENT  1618 findings  139/207 repos (67%)  {D4 751, D1 462, D3 384, D2 21}
-NAIVE    2170 findings  143/207 repos (69%)  {D1 1668, D3 481, D2 21}
-HIGH      417 findings   79/207 repos (38%)  {D4 188, D3 109, D1 99, D2 21}
+CURRENT  1753 findings  169/275 repos (61%)  {D4 818, D1 470, D3 448, D2 17}
+NAIVE    2366 findings  174/275 repos (63%)  {D1 1787, D3 562, D2 17}
+HIGH      430 findings   87/275 repos (32%)  {D4 209, D1 89, D3 115, D2 17}
 ```
+
+The corpus is NOT comparable to the 207-repository one quoted previously: the pinned list holds
+278 repositories and the earlier run reached 207 of them, so population and commits both moved.
+Only same-cache arms are compared below.
+
+### The cap drops files alphabetically, which is not a random subset
+
+`bench/build_cache.py` caps at 12 files per repository and now says what it left out: **2064
+files across 80 repositories were not fetched.** The cap takes the first 12 by name, so it is
+biased, not sampled. Measured consequence: of Arize-ai/openinference's four affected CI
+workflows, `go-CI.yaml` and `java-CI.yaml` are cached while `python-CI.yaml` and
+`typescript-CI.yaml` are dropped, because "p" and "t" sort after "g" and "j". Every finding
+count here is a floor for repositories with many workflows, and CI files tend to sort late.
+
+## The detectors were blind to the documented idiom
+
+GitHub's documented way to ask "did anything upstream fail" is the WILDCARD form,
+`needs.*.result`. Three detectors tested for it with `needs\.[A-Za-z0-9_\-]+\.(result|outputs)`,
+which cannot match `*`. The finding's own text said "never reads needs.*.result" while failing
+to match that exact string, so a correctly written fan-in gate was reported as a gate that
+cannot fail. D4 had a second form of the same error: it judged each job alone and ignored
+whether the workflow's own gate already caught the failure it described.
+
+Both arms below read the same bytes, `sha256 efdf65ce734cd293`:
+
+| arm | findings | HIGH |
+|---|---|---|
+| before the fix | 1810 | 473 |
+| after the fix | 1753 | 430 |
+| removed | 57 | **43 (9.1% of HIGH)** |
+
+Per detector: D1 488 to 470, D2 25 to 17, D4 849 to 818. D3 is untouched and does not read
+upstream state.
+
+**The 9.1% average hides where it lands.** Only 10 of 275 repositories use the wildcard idiom
+at all, so those 43 false HIGH concentrate on them. Measured on Arize-ai/openinference (1.2k
+stars, 22 workflows), whose go/java/python/typescript `ci-required` jobs each read it twice,
+counting every severity with `--all`:
+
+| arm | findings | HIGH |
+|---|---|---|
+| before the fix | 25 | 13  {D1 5, D2 4, D4 3, D3 1} |
+| after the fix | 11 | 1  {D3 1} |
+
+**Twelve of the thirteen HIGH were false.** The survivor is the one real finding, a D3: a
+`uvx ... \| grep \| awk \| jq` pipeline with no pipefail, so the step's status is jq's. Its
+impact is small because a later step fails the job when the resulting list is empty, which the
+detector cannot see; D3 does not read upstream state and neither fix touches it.
+
+The tool was most wrong about the repository with the most carefully written gates, which is the
+worst place for a linter to cry wolf, and it is why a corpus average was not enough to notice:
+9.1% across the corpus, 92% on this one repository.
+
+All 149 tests passed before and after both fixes, so neither defect was covered. The suite is
+156 now. One of the fixes was itself wrong and was caught the same way: the gate-coverage check
+first walked the needs graph transitively, but `needs.*.result` reports only DIRECT needs, and a
+failed grandparent makes the parent SKIP, which is not a failure. Transitive suppression would
+have hidden real findings. The mutation that deleted the walk SURVIVED, which is what exposed
+it.
 
 ## The corpus total is weighted by workflow size
 

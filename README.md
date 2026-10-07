@@ -128,3 +128,25 @@ is a separate and harder problem and is not in this release.
 
 ## Licence
 MIT
+
+## 0.1.1 fixes a false-positive class in 0.1.0
+
+If you installed **0.1.0**, upgrade. Three detectors asked whether a job reads its upstream's
+result with a pattern that could not match `*`, so the WILDCARD form GitHub documents,
+
+```yaml
+if: always()
+run: |
+  if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then exit 1; fi
+```
+
+was invisible to them and a correctly written fan-in gate was reported as a gate that cannot
+fail. The finding's own text said "never reads needs.*.result" while failing to match that
+string. D4 had a second form of it: it judged each job alone and ignored whether the
+workflow's own gate already caught the failure it described.
+
+Measured on one 1.2k-star repository that writes its gates this way: 13 HIGH findings before,
+1 after, and the survivor is an unrelated D3. Across the 275-repository corpus the fix removes
+43 of 430 HIGH. The gap between those two numbers is the point, and `MEASUREMENT.md` has it:
+the tool was least accurate on the repositories with the most careful CI, so a corpus average
+hid it. 149 tests passed before and after the fix, which is why there are 156 now.
