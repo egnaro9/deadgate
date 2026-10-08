@@ -14,11 +14,14 @@ import re
 import os
 from dataclasses import dataclass
 
-# EXPERIMENT AFFORDANCE, not a product feature. With DEADGATE_NAIVE=1 the detectors run
-# WITHOUT the suppressions and narrowings that tracing real repositories forced on them,
-# and D4 is withheld because it did not exist then. It exists so the cost of each
-# suppression can be measured against an identical corpus instead of two samples.
-NAIVE = os.environ.get("DEADGATE_NAIVE") == "1"
+# The DEADGATE_NAIVE experiment flag was removed in 0.1.2. It ran the detectors without the
+# suppressions that tracing real repositories forced on them, so the cost of each could be
+# measured on one corpus. It stopped doing that: 0.1.2's suppressions (the wildcard and
+# whole-context reads, and searching the whole job) live in the shared path rather than behind
+# the flag, so both arms reported an identical D1 and the pre-narrowing column silently became
+# a copy of the current one. A flag whose name promises an isolation it no longer provides is
+# worse than no flag. Version against version on one cache is the comparison that answers
+# whether a fix helped, and that is what MEASUREMENT.md now carries.
 
 FILTERS = {"grep", "jq", "head", "tail", "tee", "awk", "sed", "cut", "sort", "uniq", "wc", "tr"}
 
@@ -75,10 +78,7 @@ def _steps_text(job: dict) -> str:
     # The job-level if: is a result check too. A job guarded by
     # `if: always() && needs.x.outputs.y` IS reading its upstream, and missing this
     # was a LEAKY bug found by running against real workflows, not by the corpus.
-    # Behind NAIVE so the flag reproduces the pre-fix behaviour rather than quietly
-    # keeping the fix in both arms, which made an A/B report a difference of zero.
-    if not NAIVE:
-        out.append(str(job.get("if") or ""))
+    out.append(str(job.get("if") or ""))
     return "\n".join(out)
 
 
@@ -89,12 +89,54 @@ def _steps_text(job: dict) -> str:
 # needs.*.result" while failing to match that exact string. Measured on Arize-ai/openinference,
 # whose three `ci-required` jobs all read it twice: seven HIGH findings, every one false.
 _NEEDS_READ = re.compile(r"needs\.(?:\*|[A-Za-z0-9_\-]+)\.(?:result|outputs)")
+
+# The THIRD spelling, and the one that reads every upstream at once without containing the
+# word "result" anywhere: serialise the whole context and inspect it outside the expression.
+#
+#     env:  NEEDS_JSON: ${{ toJSON(needs) }}
+#     run:  echo "$NEEDS_JSON" | jq -r 'to_entries[] | select(.value.result != "success" ...)'
+#
+# Found on astral-sh/ruff, whose `required-checks-passed` gate is written exactly this way:
+# 0.1.1 reported 18 false HIGH against it, 9 D1 and 9 D4, one per job in the gate's needs list.
+# Fixing the wildcard form in 0.1.1 and stopping there was the error; the lesson is that a
+# gate can consult its upstreams without naming any of them.
+_NEEDS_WHOLE_CONTEXT = re.compile(r"to_?json\s*\(\s*needs\s*\)", re.I)
 _NEEDS_WILDCARD_RESULT = re.compile(r"needs\.\*\.result")
 
 
+def _reads_all_upstream_state(text: str) -> bool:
+    """True when the text consults EVERY upstream at once, by wildcard or by whole context."""
+    return bool(_NEEDS_WILDCARD_RESULT.search(text) or _NEEDS_WHOLE_CONTEXT.search(text))
+
+
+def _job_blob(job) -> str:
+    """The WHOLE job serialised, for the question "does this job consult its upstreams?".
+
+    Placement, not spelling, was the fourth false-positive class. A job that calls a reusable
+    workflow has `uses:` and no `steps:`, and passes state through JOB-level `with:`:
+
+        update-tracker:
+          uses: ./.github/workflows/update_tracking_issue.yml
+          if: ${{ always() }}
+          needs: [check-sdist]
+          with: { job_status: "${{ needs.check-sdist.result }}" }   # <- read, and missed
+
+    `_steps_text` covers step-level `with` and env but not the job-level `with` that only
+    exists for reusable calls, so scikit-learn's gate read as checking nothing. Serialising the
+    whole job ends the game of enumerating surfaces: after needs.*.result, toJSON(needs) and
+    this, the lesson is that the expression can live anywhere the schema allows.
+    """
+    import json as _json
+    try:
+        return _json.dumps(job, default=str)
+    except Exception:
+        return str(job)
+
+
 def _reads_any_upstream_state(text: str) -> bool:
-    """True when the text consults any upstream's result or outputs, wildcard included."""
-    return _NEEDS_READ.search(text) is not None
+    """True when the text consults any upstream's result or outputs, by name, by wildcard, or
+    by serialising the whole `needs` context."""
+    return bool(_NEEDS_READ.search(text) or _NEEDS_WHOLE_CONTEXT.search(text))
 
 
 def d2_fanin_without_result_check(jobs: dict) -> list[Finding]:
@@ -110,7 +152,7 @@ def d2_fanin_without_result_check(jobs: dict) -> list[Finding]:
         needs = job.get("needs")
         if not needs or not _truthy_always(job.get("if")):
             continue
-        text = _steps_text(job)
+        text = _job_blob(job)
         if _reads_any_upstream_state(text):
             continue
         upstream = ", ".join(needs) if isinstance(needs, list) else str(needs)
@@ -151,7 +193,7 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None) -> list[Finding]:
         skippable = [n for n in needs_list if n in conditional]
         if not skippable:
             continue
-        text = _steps_text(job)
+        text = _job_blob(job)
         if _reads_any_upstream_state(text):
             continue
         sev = _gate_severity(name, job, doc or {})
@@ -264,9 +306,9 @@ def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
                 tail = line.rsplit("|", 1)[1].strip().split()
                 if not tail:
                     continue
-                if tail[0] in FILTERS and (NAIVE or _upstream_can_fail(line)):
+                if tail[0] in FILTERS and _upstream_can_fail(line):
                     assigned = (re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", line) or [None, ""])[1]
-                    if not NAIVE and _result_is_emptiness_checked(assigned, body):
+                    if _result_is_emptiness_checked(assigned, body):
                         continue
                     label = step.get("name") or line[:40]
                     found.append(Finding(
@@ -327,6 +369,30 @@ def _needs_of(job) -> list[str]:
     return list(n) if isinstance(n, list) else [str(n)]
 
 
+_ALWAYS_CONJUNCT = re.compile(r"\balways\s*\(\s*\)")
+
+
+def _runs_like_a_gate(cond) -> bool:
+    """Looser than `_truthy_always`, and ONLY for deciding whether a gate covers its needs.
+
+    A fan-in gate is routinely conditioned on more than always():
+
+        if: ${{ always() && github.ref != 'refs/heads/main' }}      # astral-sh/ruff
+
+    `_truthy_always` requires the condition to reduce to exactly always(), which is right for
+    D2's own trigger ("this job always runs and still checks nothing") and wrong here: a gate
+    that runs on pull requests still catches the failure D4 describes, and branch protection is
+    about pull requests. Requiring the bare form left nine false D4/HIGH on ruff after the D1
+    half was already fixed.
+
+    Deliberately lenient, and the leniency is bounded: D4 exists to find a gating job that
+    NOTHING looks at. A gate that exists but is conditioned is a weaker finding than HIGH, so
+    suppressing it is the safer error. A condition that pins the gate to main only would not
+    cover pull requests, which this does not model; that is a known limit, not an oversight.
+    """
+    return cond is not None and bool(_ALWAYS_CONJUNCT.search(str(cond)))
+
+
 def _jobs_covered_by_a_wildcard_gate(jobs: dict) -> set[str]:
     """Jobs whose FAILURE is already caught by a fan-in gate in the same workflow.
 
@@ -342,9 +408,9 @@ def _jobs_covered_by_a_wildcard_gate(jobs: dict) -> set[str]:
     """
     covered: set[str] = set()
     for name, job in jobs.items():
-        if not isinstance(job, dict) or not _truthy_always(job.get("if")):
+        if not isinstance(job, dict) or not _runs_like_a_gate(job.get("if")):
             continue
-        if not _NEEDS_WILDCARD_RESULT.search(_steps_text(job)):
+        if not _reads_all_upstream_state(_job_blob(job)):
             continue
         covered |= set(_needs_of(job))
     return covered
@@ -372,9 +438,9 @@ def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) ->
         ups = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.outputs\.", cond))
         if not ups:
             continue
-        blob = cond + _steps_text(job)
+        blob = cond + _job_blob(job)
         checked = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.result", blob))
-        if _NEEDS_WILDCARD_RESULT.search(blob):
+        if _reads_all_upstream_state(blob):
             # `needs.*.result` asks about EVERY upstream, so it checks all of them at once.
             # Expanding it is the difference between a correct gate and a reported one.
             checked |= ups
@@ -399,7 +465,7 @@ DETECTORS = (d1_skippable_upstream, d2_fanin_without_result_check,
 
 
 def active_detectors():
-    return DETECTORS[:3] if NAIVE else DETECTORS
+    return DETECTORS
 
 
 def scan_workflow(doc: dict) -> list[Finding]:

@@ -6,7 +6,6 @@ Every figure here comes from one corpus: 207 public repositories, 1668 workflow 
 ```bash
 python bench/build_cache.py            # once; needs `gh` authenticated
 python bench/ab.py                     # current detectors
-DEADGATE_NAIVE=1 python bench/ab.py    # pre-narrowing behaviour
 ```
 
 Two things about that pin, stated before the numbers that depend on it.
@@ -22,7 +21,8 @@ once and every detector configuration reads identical bytes; compare two arms on
 
 ## Headline
 
-Corpus rebuilt 2026-10-07: **275 repositories, 2047 workflow files, `sha256 efdf65ce734cd293`.**
+Corpus rebuilt 2026-10-07 with NO per-repository cap: **275 repositories, 4543 workflow files,
+`sha256 021da3340e12b608`.**
 The figures published before that date were from a cache that no longer exists AND could not be
 rebuilt, because `bench/build_cache.py` raised `NameError` on three names it used and never
 defined. The documented reproduction command had therefore never run in the form this
@@ -30,9 +30,8 @@ repository shipped, so those numbers came from a script that is not the one here
 withdrawn rather than carried forward; see "The detectors were blind to the documented idiom".
 
 ```
-CURRENT  1753 findings  169/275 repos (61%)  {D4 818, D1 470, D3 448, D2 17}
-NAIVE    2366 findings  174/275 repos (63%)  {D1 1787, D3 562, D2 17}
-HIGH      430 findings   87/275 repos (32%)  {D4 209, D1 89, D3 115, D2 17}
+CURRENT  2917 findings  172/275 repos (63%)  {D4 1415, D3 1061, D1 414, D2 27}
+HIGH      658 findings  105/275 repos (38%)  {D4 304, D3 273, D2 27, D1 54}
 ```
 
 The corpus is NOT comparable to the 207-repository one quoted previously: the pinned list holds
@@ -57,16 +56,22 @@ to match that exact string, so a correctly written fan-in gate was reported as a
 cannot fail. D4 had a second form of the same error: it judged each job alone and ignored
 whether the workflow's own gate already caught the failure it described.
 
-Both arms below read the same bytes, `sha256 efdf65ce734cd293`:
+Both arms below read the same bytes, `sha256 021da3340e12b608`. Each revert was confirmed by a
+BEHAVIOUR PROBE before measuring, because three A/B runs during this work silently no-opped
+their own revert and printed two identical arms as if they were a comparison:
 
 | arm | findings | HIGH |
 |---|---|---|
-| before the fix | 1810 | 473 |
-| after the fix | 1753 | 430 |
-| removed | 57 | **43 (9.1% of HIGH)** |
+| 0.1.1, as published | 4562 | 1104 |
+| 0.1.2 | 2917 | 658 |
+| removed | 1645 | **446 (40% of HIGH)** |
 
-Per detector: D1 488 to 470, D2 25 to 17, D4 849 to 818. D3 is untouched and does not read
-upstream state.
+On the earlier CAPPED corpus the same comparison read 34%. The cap was hiding part of the
+defect, which is what a biased subset does: it dropped the late-alphabet CI files, and those
+are where gates live.
+
+Per detector: D1 1315 to 414, D2 66 to 27, D4 2120 to 1415. D3 is untouched at 1061 and does
+not read upstream state at all.
 
 **The 9.1% average hides where it lands.** Only 10 of 275 repositories use the wildcard idiom
 at all, so those 43 false HIGH concentrate on them. Measured on Arize-ai/openinference (1.2k
@@ -94,40 +99,25 @@ failed grandparent makes the parent SKIP, which is not a failure. Transitive sup
 have hidden real findings. The mutation that deleted the walk SURVIVED, which is what exposed
 it.
 
-## The corpus total is weighted by workflow size
+## The corpus total is weighted, and the median is what a user feels
 
-A finding count summed across a corpus is weighted by how large each workflow is. Three files
-carry 68% of the naive D1 total and one carries 55% of it alone, while 1532 of the 1668 files
-produce no D1 finding at all:
+**3513 of 4543 files produce no finding at all** (77%). The findings land on the other 1030,
+and unevenly: across the 172 affected repositories the median is 6 and the p90 is 43, against
+a maximum of 190. Quoting a corpus total alone says more about the largest repository in the
+corpus than about the tool, so `bench/ab.py` prints the per-repo median, p90 and max beside
+every total and the unit cannot be dropped by accident.
 
 ```
-921  ClickHouse/master.yml                        (163 jobs)
-141  ClickHouse/backport_branches.yml             ( 40 jobs)
- 80  liferay-portal/ci-publish-cloud-...yaml      ( 63 jobs)
+  49  LanternOps/breeze/ci.yml
+  42  Expensify/App/deploy.yml
+  38  openclaw/openclaw/ci.yml
 ```
 
-The same narrowing, measured four ways:
-
-| unit | naive | current | change |
-|---|---|---|---|
-| corpus total | 1668 | 462 | -72% |
-| corpus total excluding ClickHouse | 587 | 256 | -56% |
-| median affected repo | 3 | 2 | -1 finding |
-| p90 affected repo | 19 | 14 | -26% |
-| repos with >=1 D1 | 75 | 53 | -29% |
-
-All four are arithmetically correct. `-72%` is the one that flatters the fix, and it is a
-statement about ClickHouse's release pipeline more than about the detector. The median is the
-number a user feels, because they run this on one repository: two findings instead of three.
-
-D4 skews the same way, 751 findings but a median of 5 per affected repo against a max of 206,
-so this is a property of the corpus and not of one detector. `bench/ab.py` therefore prints the
-per-repo median, p90 and max for every detector on every run. Quoting a corpus total alone is
-not available by default.
-
-Quote the unit with the number. A percentage whose denominator was never chosen deliberately is
-the same defect this tool exists to find: a field that looks like a judgment and is really a
-default.
+An earlier version of this file said three files carried 68% of the total and one carried 55%
+alone. That was measured on the withdrawn 1668-file corpus, against the naive D1 arm that no
+longer exists, and it is not true here: the largest single file carries 2% and the top three
+carry 4%. The heavy tail is real, the single dominating file is not, and the claim is
+withdrawn rather than restated with new numbers behind the old sentence.
 
 ## What the branch-protection tier actually changed
 

@@ -12,11 +12,14 @@ CACHE = pathlib.Path(os.environ.get("DEADGATE_CACHE", "wfcache"))
 def gh(a):
     p=subprocess.run(["gh"]+a,capture_output=True,text=True)
     return p.stdout if p.returncode==0 else None
-# Files per repo, which MEASUREMENT.md quotes as 12. These three names were USED below and
+# Files per repo. The cap takes the first N BY NAME, so it is a biased subset and not a
+# sample: CI and gate workflows tend to sort late, and at 12 it dropped openinference's
+# python-CI.yaml and typescript-CI.yaml while keeping go- and java-. Override with
+# DEADGATE_PER_REPO_CAP to measure without the bias. These three names were USED below and
 # never defined, so the script this repository ships raised NameError on its first uncached
 # repo and the documented reproduction command could not run at all. The published figures
 # therefore came from a version that is not the one here. Found by running it.
-PER_REPO_CAP = 12
+PER_REPO_CAP = int(os.environ.get("DEADGATE_PER_REPO_CAP", "12"))
 
 pinned=json.load(open(HERE/"pinned_repos.json"))
 cache=CACHE; n_repo=n_file=0

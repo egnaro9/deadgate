@@ -2,7 +2,6 @@
 
   python bench/build_cache.py          # once; needs `gh` authenticated
   python bench/ab.py                   # current detectors
-  DEADGATE_NAIVE=1 python bench/ab.py  # pre-narrowing behaviour
 
 Set DEADGATE_CACHE if the cache is not ./wfcache. The sha256 printed identifies the bytes
 the run actually read, so two arms can be compared only when it matches.
@@ -11,7 +10,7 @@ import collections, hashlib, json, os, pathlib, statistics, sys
 
 import yaml
 
-from deadgate.detectors import NAIVE, active_detectors, scan_workflow
+from deadgate.detectors import active_detectors, scan_workflow
 
 CACHE = pathlib.Path(os.environ.get("DEADGATE_CACHE", "wfcache"))
 if not CACHE.is_dir():
@@ -47,7 +46,7 @@ for repo_dir in sorted(d for d in CACHE.iterdir() if d.is_dir()):
     totals.update(counts)
     per_repo[repo_dir.name] = dict(counts)
 
-mode = "NAIVE" if NAIVE else "CURRENT"
+mode = "CURRENT"
 pct = lambda k: 100 * k / max(n_repo, 1)
 print(f"{mode}  detectors={[f.__name__ for f in active_detectors()]}")
 print(f"  {n_repo} repos, {n_file} files, corpus sha256={digest.hexdigest()[:16]}")

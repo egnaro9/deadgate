@@ -184,3 +184,174 @@ def test_a_job_that_wildcard_checks_its_own_upstreams_is_not_reported():
                   pytest
     """)
     assert d4_outputs_gate_without_result_check(jobs_of(src)) == []
+
+
+# ---------------------------------------------------------------------------
+# the THIRD spelling: serialise the whole context instead of naming anything
+# ---------------------------------------------------------------------------
+#
+# A gate can consult every upstream without the word "result" appearing in any expression:
+# bind toJSON(needs) into env and inspect it in the shell. astral-sh/ruff's
+# `required-checks-passed` is written exactly this way. Against it, 0.1.1 reported 21 HIGH of
+# which 18 were false, nine D1 and nine D4, one per job in the gate's needs list. Fixing the
+# wildcard form and stopping there was the error.
+
+RUFF_SHAPED_GATE = textwrap.dedent("""
+    jobs:
+      determine_changes:
+        runs-on: ubuntu-latest
+        outputs:
+          code: ${{ steps.f.outputs.code }}
+        steps:
+          - id: f
+            run: echo "code=true" >> "$GITHUB_OUTPUT"
+      cargo-test-linux:
+        needs: [determine_changes]
+        if: ${{ needs.determine_changes.outputs.code == 'true' }}
+        runs-on: ubuntu-latest
+        steps: [{run: "cargo test"}]
+      required-checks-passed:
+        if: ${{ always() && github.ref != 'refs/heads/main' }}
+        needs: [determine_changes, cargo-test-linux]
+        runs-on: ubuntu-latest
+        steps:
+          - name: Check required jobs passed
+            env:
+              NEEDS_JSON: ${{ toJSON(needs) }}
+            run: |
+              failing=$(echo "$NEEDS_JSON" | jq -r 'to_entries[]
+                | select(.value.result != "success" and .value.result != "skipped")
+                | "\\(.key): \\(.value.result)"')
+              if [ -n "$failing" ]; then echo "$failing"; exit 1; fi
+""")
+
+
+def test_a_gate_that_serialises_the_whole_needs_context_is_not_reported():
+    jobs = jobs_of(RUFF_SHAPED_GATE)
+    assert "needs.*.result" not in RUFF_SHAPED_GATE, "fixture must use the toJSON form only"
+    assert d2_fanin_without_result_check(jobs) == []
+    assert d1_skippable_upstream(jobs) == []
+    assert d4_outputs_gate_without_result_check(jobs) == []
+
+
+def test_the_context_form_is_found_in_env_not_only_in_a_run_body():
+    # toJSON(needs) is bound in env: and read from a shell variable, never appearing in the run
+    # body, so a scan of run bodies alone reads the gate as checking nothing. _steps_text
+    # already covered step env, step with and job env; a helper added here to "fix" that was
+    # dead code, and the mutation sweep proved it by surviving its own deletion.
+    jobs = jobs_of(RUFF_SHAPED_GATE)
+    gate = jobs["required-checks-passed"]
+    assert "toJSON" not in str(gate["steps"][0].get("run"))
+    assert "toJSON" in str(gate["steps"][0]["env"])
+    assert d4_outputs_gate_without_result_check(jobs) == []
+
+
+def test_a_gate_conditioned_on_more_than_always_still_counts():
+    # `always() && github.ref != ...` is the normal shape. Requiring the bare always() left
+    # nine false D4/HIGH on ruff even after the context form was understood.
+    assert "always() && github.ref" in RUFF_SHAPED_GATE
+    assert d4_outputs_gate_without_result_check(jobs_of(RUFF_SHAPED_GATE)) == []
+
+
+def test_serialising_a_different_context_does_not_count():
+    # toJSON(github) says nothing about upstream jobs. The suppression must key on `needs`,
+    # not on the presence of toJSON.
+    src = RUFF_SHAPED_GATE.replace("toJSON(needs)", "toJSON(github)")
+    found = d4_outputs_gate_without_result_check(jobs_of(src))
+    assert [f.detector for f in found] == ["D4"], "toJSON(github) must not suppress anything"
+
+
+def test_a_gate_with_no_always_at_all_does_not_cover_its_needs():
+    # The other half of the leniency. Without always(), a gate does not run when an upstream
+    # fails, so it covers nothing and the finding must stand.
+    src = RUFF_SHAPED_GATE.replace("if: ${{ always() && github.ref != 'refs/heads/main' }}",
+                                   "if: ${{ github.ref != 'refs/heads/main' }}")
+    assert "always()" not in src
+    found = d4_outputs_gate_without_result_check(jobs_of(src))
+    assert [f.detector for f in found] == ["D4"]
+
+
+# ---------------------------------------------------------------------------
+# the fourth class, which is placement rather than spelling
+# ---------------------------------------------------------------------------
+
+REUSABLE_CALL_GATE = textwrap.dedent("""
+    jobs:
+      check-sdist:
+        runs-on: ubuntu-latest
+        steps: [{run: "python -m build --sdist"}]
+      update-tracker:
+        uses: ./.github/workflows/update_tracking_issue.yml
+        if: ${{ always() }}
+        needs: [check-sdist]
+        with:
+          job_status: ${{ needs.check-sdist.result }}
+""")
+
+
+def test_a_reusable_workflow_call_that_passes_a_result_is_not_reported():
+    # scikit-learn's check-sdist.yml. A job calling a reusable workflow has `uses:` and NO
+    # `steps:`, and passes state through JOB-level `with:`. The expression is one the detectors
+    # already understood; it simply lived where nothing looked, because step-level `with` was
+    # scanned and job-level `with` was not. The job reads its upstream, so nothing is reported.
+    jobs = jobs_of(REUSABLE_CALL_GATE)
+    assert "steps" not in jobs["update-tracker"], "fixture must be a reusable-workflow call"
+    assert "needs.check-sdist.result" in str(jobs["update-tracker"]["with"])
+    assert d2_fanin_without_result_check(jobs) == []
+    assert d1_skippable_upstream(jobs) == []
+
+
+def test_the_same_call_without_the_result_is_still_reported():
+    # The counter-case, so searching the whole job cannot become a blanket mute: drop the
+    # result from `with:` and the gate genuinely checks nothing.
+    src = REUSABLE_CALL_GATE.replace("job_status: ${{ needs.check-sdist.result }}",
+                                     "job_status: unknown")
+    assert "needs.check-sdist.result" not in src
+    assert [f.detector for f in d2_fanin_without_result_check(jobs_of(src))] == ["D2"]
+
+
+def test_a_conditional_reusable_call_that_checks_the_result_is_not_a_d4():
+    # D4's own read of the result had the same placement blindness: a job can be gated on an
+    # upstream's OUTPUTS and still check that upstream's RESULT, with both living at job level
+    # because a reusable call has no steps to put them in.
+    src = textwrap.dedent("""
+        jobs:
+          changes:
+            runs-on: ubuntu-latest
+            steps: [{run: "true"}]
+          publish:
+            uses: ./.github/workflows/publish.yml
+            needs: [changes]
+            if: ${{ needs.changes.outputs.release == 'true' }}
+            with:
+              upstream_status: ${{ needs.changes.result }}
+    """)
+    assert d4_outputs_gate_without_result_check(jobs_of(src)) == []
+    # and without the result, the finding stands
+    bare = src.replace("upstream_status: ${{ needs.changes.result }}", "upstream_status: na")
+    assert [f.detector for f in d4_outputs_gate_without_result_check(jobs_of(bare))] == ["D4"]
+
+
+def test_a_gate_that_forwards_the_whole_context_to_a_reusable_workflow_covers_its_needs():
+    # The coverage check too: a fan-in gate implemented as a reusable call forwards
+    # toJSON(needs) through job-level `with:`, so the whole-context read is not in any step.
+    src = textwrap.dedent("""
+        jobs:
+          changes:
+            runs-on: ubuntu-latest
+            steps: [{run: "true"}]
+          build:
+            needs: [changes]
+            if: ${{ needs.changes.outputs.code == 'true' }}
+            runs-on: ubuntu-latest
+            steps: [{run: "make"}]
+          gate:
+            uses: ./.github/workflows/report.yml
+            if: ${{ always() }}
+            needs: [changes, build]
+            with:
+              results: ${{ toJSON(needs) }}
+    """)
+    assert d4_outputs_gate_without_result_check(jobs_of(src)) == []
+    nogate = src.replace("results: ${{ toJSON(needs) }}", "results: none")
+    assert [f.detector for f in d4_outputs_gate_without_result_check(jobs_of(nogate))] == ["D4"]

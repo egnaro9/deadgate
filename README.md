@@ -114,10 +114,14 @@ Two transport facts are enforced rather than trusted, because both were observed
 Figures, and the unit each one is in, are in [MEASUREMENT.md](MEASUREMENT.md). Reproduce them
 with `python bench/build_cache.py` then `python bench/ab.py`.
 
-The short version: corpus totals are weighted by workflow size, one monorepo carries 55% of the
-naive D1 count, and the median affected repository sees 2 findings where the pre-narrowing
-detector gave 3. `bench/ab.py` prints the per-repo median, p90 and max alongside every total,
-so the unit cannot be dropped by accident.
+The short version: a corpus total is weighted by workflow size, so one monorepo's release
+pipeline can carry most of it while the repository you actually run this on sees a handful.
+`bench/ab.py` prints the per-repo median, p90 and max alongside every total, so the unit cannot
+be dropped by accident, and the median is the number a user feels.
+
+The `DEADGATE_NAIVE` arm was removed in 0.1.2. It had stopped isolating what it named: the new
+suppressions live in the shared path, so both arms reported identical figures and the
+pre-narrowing column had quietly become a copy of the current one.
 
 ## Scope, stated plainly
 
@@ -129,24 +133,42 @@ is a separate and harder problem and is not in this release.
 ## Licence
 MIT
 
-## 0.1.1 fixes a false-positive class in 0.1.0
+## 0.1.2 closes four false-positive classes, two of them shipped
 
-If you installed **0.1.0**, upgrade. Three detectors asked whether a job reads its upstream's
-result with a pattern that could not match `*`, so the WILDCARD form GitHub documents,
+**Upgrade from 0.1.0 or 0.1.1.** Four times this tool reported correct CI as broken, each time
+because it asked "does this job consult its upstreams?" and looked in too few places.
+
+| # | what was missed | found on |
+|---|---|---|
+| 1 | `needs.*.result` — the WILDCARD form, matched with `[A-Za-z0-9_-]+`, which cannot match `*` | Arize-ai/openinference |
+| 2 | D4 judged a job alone, ignoring the workflow's own gate | Arize-ai/openinference |
+| 3 | `toJSON(needs)` — every upstream read with no `result` token anywhere; and gates written `always() && <cond>` rather than bare `always()` | astral-sh/ruff |
+| 4 | PLACEMENT, not spelling: a reusable-workflow call has `uses:` and no `steps:`, passing `needs.X.result` through JOB-level `with:` | scikit-learn |
+
+1 and 2 shipped in 0.1.0 and were fixed in 0.1.1; 3 and 4 were found afterwards by pointing the
+fixed version at two more repositories. The whole job is now searched, so placement stops
+mattering.
 
 ```yaml
+# all four of these are a gate doing its job, and all four were reported as one that cannot
 if: always()
-run: |
-  if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then exit 1; fi
+run: if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then exit 1; fi
+---
+if: ${{ always() && github.ref != 'refs/heads/main' }}
+env: { NEEDS_JSON: "${{ toJSON(needs) }}" }
+---
+uses: ./.github/workflows/report.yml
+with: { job_status: "${{ needs.check-sdist.result }}" }
 ```
 
-was invisible to them and a correctly written fan-in gate was reported as a gate that cannot
-fail. The finding's own text said "never reads needs.*.result" while failing to match that
-string. D4 had a second form of it: it judged each job alone and ignored whether the
-workflow's own gate already caught the failure it described.
+Measured on one 275-repository, 4543-file corpus, both arms reading identical bytes:
+**4562 findings and 1104 HIGH before, 2917 and 658 after** — 40% of HIGH removed. On the
+repositories that write their gates carefully the share is far higher: openinference went from
+13 HIGH to 1, ruff from 21 to 3, and in both cases the survivors are unrelated D3 findings.
 
-Measured on one 1.2k-star repository that writes its gates this way: 13 HIGH findings before,
-1 after, and the survivor is an unrelated D3. Across the 275-repository corpus the fix removes
-43 of 430 HIGH. The gap between those two numbers is the point, and `MEASUREMENT.md` has it:
-the tool was least accurate on the repositories with the most careful CI, so a corpus average
-hid it. 149 tests passed before and after the fix, which is why there are 156 now.
+That gap is the lesson worth keeping. The tool was least accurate on the repositories with the
+BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
+surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
+first two fixes and 161 through the second two, so not one of them was covered by anything.
+There are 165 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+suite ever drift apart again.

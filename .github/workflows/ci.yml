@@ -17,6 +17,8 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/ -q
+      - name: README's advertised test count must match the suite
+        run: python scripts/check_readme_test_count.py
       - name: Dogfood, deadgate must not flag its own workflow
         run: |
           set -o pipefail
