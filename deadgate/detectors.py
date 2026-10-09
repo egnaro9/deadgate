@@ -333,33 +333,92 @@ _ONLY_PRINTED = re.compile(r"^\s*echo\b(?!.*(>>|>|\$GITHUB_OUTPUT|\$GITHUB_ENV))
 
 
 def _substitution_bodies(line: str) -> list[str]:
-    """Bodies of $( ... ), innermost first, so a pipe inside one is analysed on its own."""
-    out, stack = [], []
-    i = 0
-    # `< len(line)`, not `< len(line) - 1`. The old bound never examined the FINAL
-    # character, so a substitution closing at end of line was never closed and this
-    # returned nothing. `X=$(cmd | filter)` almost always ends its line, which is the
-    # shape this function exists for, so the narrowing it feeds could hardly ever fire.
-    while i < len(line):
-        if line[i] == "$" and i + 1 < len(line) and line[i + 1] == "(":
-            stack.append(i + 2); i += 2; continue
-        if line[i] == ")" and stack:
-            out.append(line[stack.pop():i])
+    """Bodies of $( ... ), innermost first, so a pipe inside one is analysed on its own.
+
+    Delegates to `_substitution_spans`, which respects shell quoting. The hand-rolled
+    scanner this replaced counted parens blind to quotes and escapes, so an escaped paren
+    inside a quoted regex closed the substitution early and returned a truncated body.
+    It also had an off-by-one before that: `while i < len(line) - 1` never examined the
+    final character, so a substitution closing at end of line was never closed at all.
+    """
+    return [line[a:b] for a, b in _substitution_spans(line)]
+
+
+def _substitution_spans(text: str) -> list[tuple[int, int]]:
+    r"""(start, end) of every `$( ... )` body, innermost first, respecting shell quoting.
+
+    Three things this has to get right, each found by reading a mangled segment in a real
+    finding rather than by a test:
+
+    1. Quotes. Counting `$(` and `)` blind made an escaped paren in a quoted regex close
+       the substitution early:
+
+           version=$(grep -o 'LLVM_VERSION_\(MAJOR\|MINOR\|PATCH\) [0-9]\+' f | cut -d ' ' -f 2)
+
+       reported its filter as `PATCH\`.
+
+    2. A substitution body is parsed FRESH. Inside double quotes a single quote is
+       literal, but inside `$( ... )` nested in double quotes it quotes again, so
+
+           touched="$(sed -nE 's#^(packages/[^/]+)/.*##p' f | sort -u)"
+
+       has its `)` protected by the inner single quotes. Treating the body as still
+       double-quoted closed the span at `+)` and produced `touched="/.*##p' f | sort -u)"`.
+
+    3. Process substitution. `<( ... )` and `>( ... )` take a paren too, and ignoring them
+       let their closing paren close the enclosing `$(`:
+
+           count_new_js=$(comm -1 -2 <(git diff ...) <(gh pr view ... | jq ...))
+
+       lost everything after the first `<(...)`.
+    """
+    spans, stack = [], []
+    i, n = 0, len(text)
+    in_single = in_double = False
+    while i < n:
+        c = text[i]
+        if in_single:
+            if c == "'":
+                in_single = False
+            i += 1
+            continue
+        if c == "\\":
+            i += 2                      # escaped character, whatever it is
+            continue
+        if c == "'" and not in_double:
+            in_single = True; i += 1; continue
+        if c == '"':
+            in_double = not in_double; i += 1; continue
+        # `$(`, `<(` and `>(` all open a paren that must be matched. A command
+        # substitution body is parsed fresh, so the quote state is saved and reset.
+        if c in "$<>" and i + 1 < n and text[i + 1] == "(":
+            stack.append((i + 2, in_double, c))
+            in_double = False
+            i += 2
+            continue
+        if c == ")" and stack:
+            start, saved_double, kind = stack.pop()
+            in_double = saved_double
+            if kind == "$":
+                spans.append((start, i))
         i += 1
-    return out
+    return spans
 
 
 def _strip_substitutions(text: str) -> str:
-    """The text with every `$( ... )` removed, so the OUTER command is judged alone."""
-    out, depth, i = [], 0, 0
-    while i < len(text):
-        if text[i] == "$" and i + 1 < len(text) and text[i + 1] == "(":
-            depth += 1; i += 2; continue
-        if text[i] == ")" and depth:
-            depth -= 1; i += 1; continue
-        if not depth:
-            out.append(text[i])
-        i += 1
+    """The text with every top-level `$( ... )` removed, so the OUTER command stands alone."""
+    spans = _substitution_spans(text)
+    if not spans:
+        return text
+    top = []
+    for a, b in sorted(spans):
+        if not top or a > top[-1][1]:
+            top.append((a, b))
+    out, prev = [], 0
+    for a, b in top:
+        out.append(text[prev:a - 2])    # drop the "$(" too
+        prev = b + 1                    # and the ")"
+    out.append(text[prev:])
     return "".join(out)
 
 
@@ -625,6 +684,13 @@ def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
                     label = step.get("name") or line[:40]
                     found.append(Finding(
                         detector="D3",
+                        # Severity is judged on the LINE, while the finding names the
+                        # SEGMENT, and that split is deliberate. The segment is WHERE
+                        # the status is masked; the enclosing line is HOW the bad value
+                        # escapes, via an assignment or a redirect into $GITHUB_OUTPUT.
+                        # Judging severity on the segment alone was tried: it sees no
+                        # assignment and no export in `sha256sum f | cut -d' ' -f1`, so
+                        # HIGH fell from 94 to 30 and six tests went red.
                         severity=_d3_severity(step, name, job, doc or {}, line),
                         job=name,
                         title="exit status masked by a pipe",

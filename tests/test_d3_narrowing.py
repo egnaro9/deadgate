@@ -190,3 +190,104 @@ def test_a_step_still_reports_only_one_finding():
     """The break stays. Two masked pipelines in one step report once, not twice."""
     run = 'a=$(curl -s u1 | jq -r .x)\nb=$(curl -s u2 | jq -r .y)\necho "$a$b" >> "$GITHUB_OUTPUT"'
     assert len(_high(run)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Shell quoting in the substitution scanner.
+#
+# The scanner counted `$(` and `)` with no idea of quotes or escapes. An escaped paren
+# inside a quoted regex closed the substitution early:
+#
+#   version=$(grep -o 'LLVM_VERSION_\(MAJOR\|MINOR\|PATCH\) [0-9]\+' f | cut -d ' ' -f 2)
+#
+# gave a body of `grep -o 'LLVM_VERSION_\(MAJOR\|MINOR\|PATCH\` and an outer remainder of
+# `version= [0-9]\+' f | cut -d ' ' -f 2)`, so the reported FILTER was `PATCH\`. That was
+# survivable while the scan only produced a benign/not-benign hint, and stopped being
+# survivable in 0.1.8, which began reporting the segment itself.
+#
+# Found by reading the reported segments of real findings, not by a test.
+
+from deadgate.detectors import _substitution_bodies, _substitution_spans
+
+LLVM = r"""version=$(grep -o 'LLVM_VERSION_\(MAJOR\|MINOR\|PATCH\) [0-9]\+' f | cut -d ' ' -f 2)"""
+
+
+def test_an_escaped_paren_in_a_quoted_regex_does_not_close_the_substitution():
+    bodies = _substitution_bodies(LLVM)
+    assert len(bodies) == 1, bodies
+    assert bodies[0].startswith("grep -o") and bodies[0].endswith("-f 2"), bodies[0]
+
+
+def test_the_outer_text_is_what_is_left_after_the_whole_substitution():
+    assert _strip_substitutions(LLVM).strip() == "version="
+
+
+def test_the_reported_filter_is_the_real_one_not_regex_debris():
+    filters = [f for _, f in _pipeline_candidates(LLVM)]
+    assert filters == ["cut"], filters
+
+
+def test_single_quotes_make_everything_literal():
+    """No escape processing inside single quotes, so a lone backslash is just a character."""
+    assert _substitution_bodies(r"""echo '$(not a substitution)'""") == []
+
+
+def test_a_substitution_inside_double_quotes_is_still_found():
+    assert _substitution_bodies('echo "$(date | cut -c1-3)"') == ["date | cut -c1-3"]
+
+
+def test_nested_substitutions_come_innermost_first():
+    bodies = _substitution_bodies('a=$(echo "$(uname -s)" | tr a-z A-Z)')
+    assert bodies[0] == "uname -s", bodies
+
+
+def test_a_single_quote_inside_double_quotes_is_not_a_quote_opener():
+    """An apostrophe in ordinary prose must not swallow the rest of the line.
+
+    Without double-quote tracking the `'` in "it's" starts single-quote mode and the
+    substitution after it is never seen.
+    """
+    assert _substitution_bodies("""echo "it's $(date | cut -c1-3)" """) == ["date | cut -c1-3"]
+
+
+def test_strip_removes_whole_substitutions_not_nested_pieces():
+    """Only TOP-LEVEL spans are removed. Removing nested ones separately would delete
+    the same characters twice and leave fragments of the outer command behind."""
+    assert _strip_substitutions('a=$(echo "$(uname -s)" | tr a-z A-Z) | tee f').strip() == "a= | tee f"
+
+
+def test_an_escaped_dollar_does_not_open_a_substitution():
+    r"""`\$(` is a literal dollar followed by a paren, not a command substitution.
+
+    This is what the backslash branch of the scanner is for. The escaped-quote case does
+    NOT discriminate, because `$(` is recognised inside double quotes anyway, so dropping
+    escape handling changes nothing there: a mutation removing the branch survived against
+    that test and only died against this one.
+    """
+    assert _substitution_bodies(r"""echo \$(ls | head -1)""") == []
+    # and the unescaped form still is one
+    assert _substitution_bodies("""echo $(ls | head -1)""") == ["ls | head -1"]
+
+
+def test_a_substitution_body_is_parsed_fresh():
+    r"""Inside double quotes a single quote is literal, but inside `$( ... )` nested in
+    double quotes it quotes again, because the body is parsed as new shell code.
+
+    Treating the body as still double-quoted let the `)` in a quoted sed expression close
+    the span early, reporting `touched="/.*#\1#p' f | sort -u)"` as the segment.
+    """
+    line = """touched="$(sed -nE 's#^(packages/[^/]+)/.*#\\1#p' f | sort -u)" """
+    assert _strip_substitutions(line).strip() == 'touched=""'
+
+
+def test_process_substitution_parens_are_matched_too():
+    r"""`<( ... )` takes a paren. Ignoring it let its closing paren close the enclosing
+    `$(`, losing everything after the first one."""
+    line = """count_new_js=$(comm -1 -2 <(git diff --name-only a b) <(gh pr view 1 --json files | jq -r '.f'))"""
+    assert _strip_substitutions(line).strip() == "count_new_js="
+
+
+def test_a_process_substitution_is_not_reported_as_a_command_substitution():
+    """Only `$( )` bodies are returned; `<( )` is matched for paren balance only."""
+    bodies = _substitution_bodies("diff <(sort a | uniq) <(sort b)")
+    assert bodies == [], bodies

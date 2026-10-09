@@ -32,8 +32,8 @@ the one real hazard that is now undetected by design.
 
 Measured precision, so the table above is not the only claim: D1 is **65% false per
 finding** on a complete 54-finding census and therefore never reaches HIGH on its own;
-D3's HIGH is **35% false** on a complete 125-finding census of that stratum, after
-the 0.1.7 narrowing took it down from 51%. It is the only detector that produces HIGH.
+D3's HIGH is **30.9% false** on a complete hand-labelled census of that stratum (94
+findings), down from 51.2% before the 0.1.7 narrowing. It is the only detector that produces HIGH.
 
 Every finding carries a reproduction. A finding without one is an opinion, and this tool
 does not emit opinions.
@@ -141,6 +141,43 @@ is a separate and harder problem and is not in this release.
 
 ## Licence
 MIT
+
+## 0.1.9 fixes a substitution scanner that was blind to shell quoting
+
+Found by reading the segments 0.1.8 began reporting, not by a test. Several were mangled,
+and a mangled segment means the reported filter and the head-can-fail judgement were both
+computed on corrupted text. Three defects in one scanner, all from counting parens without
+parsing:
+
+| | shape | what it produced |
+|---|---|---|
+| quotes | `$(grep -o 'X\(A\|B\)' f \| cut ...)` | filter reported as `PATCH\` |
+| fresh context | `"$(sed 's#^(a)#\1#p' f \| sort)"` | span closed at `+)` |
+| process substitution | `$(comm <(a) <(b \| jq))` | everything after the first `<(...)` lost |
+
+Inside `$( ... )` the body is parsed as new shell code, so a single quote quotes again even
+when the substitution sits inside double quotes. The scanner now tracks single quotes,
+double quotes, backslash escapes and `<( )`, and saves and restores the quote state across
+a substitution boundary.
+
+### D3's HIGH stratum is fully hand-labelled again
+
+**94 findings, 65 true, 29 false, 30.9% false**, with no unlabelled residue. Across the
+sequence: 51.2% before any narrowing, 35.1% after 0.1.7 against partial labels, 30.9% now
+against complete ones.
+
+Of the 17 that needed new labels because the reported segment moved, 11 are true. They are
+the same defects named more precisely: `sha256sum f | cut -d' ' -f1` rather than the
+`echo ... >> "$GITHUB_OUTPUT"` wrapped around it, and four `for x in $(find ... | sort)`
+loops whose empty list means a check runs over nothing and passes.
+
+### One thing deliberately left alone
+
+Severity is judged on the **line** while the finding names the **segment**. That looks like
+an inconsistency and is not: the segment is where the status is masked, the enclosing line
+is how the bad value escapes. Judging severity on the segment alone was tried, and HIGH
+fell from 94 to 30 with six tests red, because `sha256sum f | cut -d' ' -f1` on its own
+shows no assignment and no export.
 
 ## 0.1.8 fixes two bugs the census found in D3 itself
 
@@ -480,5 +517,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 206 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 218 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.
