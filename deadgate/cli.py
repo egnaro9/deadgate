@@ -10,7 +10,7 @@ import yaml
 
 from .detectors import scan_workflow
 from .protection import fetch, gh_api, repo_meta, selftest
-from .resolve import attribute, resolve, workflow_is_callable
+from .resolve import attribute, resolve, workflow_is_callable, REQUIRED
 
 
 def workflows(root: pathlib.Path):
@@ -77,6 +77,32 @@ def main(argv: list[str] | None = None) -> int:
             callable_files.add(str(f))
         for x in scan_workflow(doc, base=root):
             why = ""
+            # D1 is reported ONLY when branch protection confirms the job is a required
+            # check. Without that confirmation its claim is not checkable, and measurement
+            # says the claim is almost always wrong:
+            #
+            #   373 findings on a 275-repo corpus
+            #   -255  the dependent would be SKIPPED along with its need. GitHub documents
+            #         this: "if a job fails or is skipped, all jobs that need it are
+            #         skipped unless the jobs use a conditional expression that causes the
+            #         job to continue". So the finding's text, "a skipped job reports
+            #         Success and X never reads the result", describes a job running
+            #         without its dependency. It does not run. What is left is "a skipped
+            #         required check counts as success", which needs protection data.
+            #   -101  the dependent does run, but it is release_lease, postSlackMessage*,
+            #         ci-timing, merge-reports, consolidate-metrics. The reporting and
+            #         notifier family, which the D2 census measured at 0 true of 27.
+            #    -10  WordPress/gutenberg status checks, known class-7 false positives.
+            #   ----
+            #     ~7  candidates, and their precision was never established.
+            #
+            # An uncapped 40-finding sample of the current population labelled ~92% false.
+            # D4 was removed for making an unverifiable branch-protection claim; D1 makes
+            # the same claim but, unlike D4, the tool can actually check it with --repo.
+            # So the claim is gated on its evidence rather than the detector deleted.
+            if x.detector == "D1" and prot is None:
+                suppressed += 1
+                continue
             if prot is not None:
                 job = ((doc or {}).get("jobs") or {}).get(x.job)
                 r = resolve(x.severity, x.job, job if isinstance(job, dict) else {}, prot,
@@ -85,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
                 if r.moved:
                     why = f"{r.structural} -> {r.severity}  {why}"
                 x = replace(x, severity=r.severity)
+                if x.detector == "D1" and r.verdict != REQUIRED:
+                    suppressed += 1
+                    continue
             if x.severity == "LOW" and not args.all:
                 suppressed += 1
                 continue

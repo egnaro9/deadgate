@@ -22,7 +22,7 @@ be parsed**. A file it could not read is never counted as a file with no problem
 
 | id | defect | why it matters |
 |----|--------|----------------|
-| D1 | a job depends on a skip-prone job and never reads `needs.*.result` | the dependency skips, reports Success, and the gate passes with nothing run |
+| D1 | a job depends on a skip-prone job and never reads `needs.*.result` | **only reported with `--repo`**, when branch protection confirms the job is a required check |
 | D3 | a `run:` step ends a pipeline in a filter with no `pipefail` | the step's status is the filter's, so an upstream failure passes |
 
 **Two detectors have been removed rather than tuned**, each on hand-labelled evidence
@@ -39,7 +39,7 @@ Every figure below is hand-labelled. None is an estimate of an estimate.
 | D3 | HIGH (94) | complete census | **30.9%** |
 | D3 | MEDIUM (144) | **complete census** | **54.9%** |
 | D3 | LOW (426) | uncapped sample, n=15 | **47%** `[25, 70]` |
-| D1 | all (373) | complete census of its 54 HIGH at 0.1.4 | **65%** |
+| D1 | **not reported without `--repo`** | see below | n/a |
 
 **What you see by default is about 45% false.** The CLI hides LOW without `--all`, so the
 default output is HIGH plus MEDIUM, 238 D3 findings, of which about 108 are wrong.
@@ -67,7 +67,37 @@ earlier sample here. A per-repository cap makes the estimator unbiased for the p
 rate and about 16 points low for the per-finding rate, which is the defect described in
 the 0.1.4 notes below.
 
-D1 never reaches HIGH on its own for the same reason its census found. It is the only detector that produces HIGH.
+### D1 says nothing unless branch protection confirms the check
+
+D1's finding text says "a skipped job reports Success, and X never reads needs.Y.result",
+which describes X running without its dependency. [GitHub documents that it does
+not](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds):
+"If a job fails or is skipped, all jobs that need it are skipped unless the jobs use a
+conditional expression that causes the job to continue."
+
+Measured over 373 D1 findings on the corpus:
+
+| | |
+|---|---|
+| 255 (68%) | the dependent would be **skipped too**, so what remains is "a skipped required check counts as success", which needs protection data |
+| 101 (27%) | the dependent does run, but it is `release_lease`, `postSlackMessageOnFailure`, `ci-timing`, `merge-reports`: the reporting family the D2 census measured at **0 true of 27** |
+| 10 (3%) | gutenberg status checks, known class-7 false positives |
+| **~7** | candidates, precision never established |
+
+An uncapped 40-finding sample of the current population labelled about **92% false**.
+
+**The figure here used to read "65% false", and it was stale.** It came from a census of 54
+findings taken at 0.1.4; that census covers 46 of today's 373 (12%), and among those the
+rate is 76.7%. Quoting it against the whole population was the claim-rot pattern this
+project keeps finding in other people's repositories.
+
+D4 was **removed** for making an unverifiable branch-protection claim. D1 makes the same
+claim, but unlike D4 the tool can check it: `--repo` reads the required contexts and
+`resolve()` attributes a job to one. So the claim is gated on its evidence rather than the
+detector deleted. **Without `--repo`, deadgate is a one-detector tool**, and the table
+above should be read that way.
+
+D3 is the only detector that produces HIGH.
 
 Every finding carries a reproduction. A finding without one is an opinion, and this tool
 does not emit opinions.
@@ -450,6 +480,10 @@ the 54 findings hand-labelled, 29 distinct jobs. **76% false per finding, 59% pe
 exact, no interval. Even after all three fixes above it is 65% false, with eleven of the
 survivors a single reporting job.
 
+> That 65% describes the population as it stood at 0.1.4. It covers 46 of today's 373
+> D1 findings, 12%, where the rate is 76.7%. D1 is no longer reported at all without
+> `--repo`; see the precision section near the top.
+
 "A required check is satisfied by a skipped job" needs a protection configuration no
 workflow file carries. So D1 follows D2: MEDIUM when nothing in the workflow
 consults upstream results at all, LOW when something does, and HIGH only when
@@ -551,5 +585,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 223 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 228 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.

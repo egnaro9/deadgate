@@ -1,6 +1,6 @@
 [project]
 name = "deadgate"
-version = "0.1.9"
+version = "0.2.0"
 description = "Find CI checks that cannot fail: gates satisfied by skipped jobs, exit statuses swallowed by pipes, fan-ins that never read whether their upstream passed."
 readme = "README.md"
 requires-python = ">=3.10"
