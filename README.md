@@ -22,7 +22,7 @@ be parsed**. A file it could not read is never counted as a file with no problem
 
 | id | defect | why it matters |
 |----|--------|----------------|
-| D1 | a job depends on a skip-prone job and never reads `needs.*.result` | **only reported with `--repo`**, when branch protection confirms the job is a required check |
+| D1 | a job depends on a skip-prone job and never reads `needs.*.result` | **only reported with `--repo`**, when branch protection confirms the job is a required check. Measured firing rate on the 275-repo corpus: **0**. |
 | D3 | a `run:` step ends a pipeline in a filter with no `pipefail` | the step's status is the filter's, so an upstream failure passes |
 
 **Two detectors have been removed rather than tuned**, each on hand-labelled evidence
@@ -39,17 +39,41 @@ Every D3 stratum was censused, and the tiers did not rank anything:
 |---|---|---|
 | HIGH | 94 | 30.9% `[22.4, 40.8]` |
 | LOW | 415 | 31.6% `[27.3, 36.2]` |
-| MEDIUM | 153 | **55.6%** `[47.6, 63.2]` |
+| MEDIUM | 144 | **52.8%** `[44.7, 60.8]` |
 
-HIGH's interval overlaps the merged non-HIGH tier (38.0% `[34.1, 42.1]`), so the loudest
-tier was not reliably better than everything else. LOW was indistinguishable from HIGH.
-The one real separation was MEDIUM being **worse**, and that came from `_d3_severity`
-short-circuiting on whether the workflow runs on `pull_request` before it looked at the
-finding at all: the axis measured the trigger, not correctness.
+HIGH's interval `[22.4, 40.8]` overlaps the merged non-HIGH tier, 37.0% `[33.1, 41.1]`, so
+the loudest tier was not reliably better than everything else. LOW was indistinguishable from HIGH. The one real separation
+was MEDIUM being **worse**, and that came from `_d3_severity` short-circuiting on whether
+the workflow runs on `pull_request` before it looked at the finding at all: the axis
+measured the trigger, not correctness.
 
 A severity that hid the better findings behind `--all` and shouted the worse ones is worse
-than none, so it is gone. `--all` is accepted and ignored. **D3 is 37.0% false overall**,
-245 of 662, and that is the number.
+than none, so it is gone. `--all` is accepted and ignored. **D3 is 36.1% false overall**,
+236 of 653, and that is the number.
+
+> **The 0.3.0 release notes said 37.0%, 245 of 662. Both figures were stale and this is
+> the correction.** MEDIUM was censused at **153** findings on 0.1.9. The `grep -q`
+> suppression that shipped in 0.2.0 then removed **9** of them, so adding that stratum to
+> a post-0.2.0 LOW double-counted findings the tool no longer emits: 94 + 153 + 415 = 662,
+> while every commit from 0.1.9 on emits 653. Verified by running the scanner at three
+> release commits and diffing the MEDIUM population: exactly 9 gone, 0 added, and all 9
+> are `cmd | grep -q X`, the class the suppression removed **because it is not a defect**.
+> So all 9 were false, the numerator drops with the denominator, and MEDIUM's own rate
+> falls from 55.6% to 52.8%.
+>
+> **The 0.1.11 commit message said 54.9% for the same 144, and that figure is also wrong.**
+> It removed only 6 of the 9 from the false count, because 3 had been labelled TRUE in an
+> earlier sample taken *before* the `grep -q` insight that refutes them
+> (`mise ... | grep -Fq -- 'install'` twice, and `curl -sf ... | grep -q 200`: in each one
+> a failing head emits nothing, grep matches nothing and exits 1, so the step fails
+> correctly). Shipping the suppression on that reasoning and keeping the old labels is
+> holding both positions at once. The arithmetic carries its own check: the census was
+> **68 true, 85 false** of 153, so removing 9 false findings must leave true at **68**, and
+> 68 + 76 = 144. Under 54.9% it would have to be 65, which would mean the suppression
+> deleted 3 real defects.
+>
+> The conclusion is unchanged either way: 30.9% against 52.8% is still the only real
+> separation, and LOW at 31.6% is still indistinguishable from HIGH.
 
 ### Measured precision, so the table above is not the only claim
 
@@ -57,16 +81,16 @@ Every figure below is hand-labelled. None is an estimate of an estimate.
 
 | detector | basis | false |
 |---|---|---|
-| D3, all 662 | **complete census of all three former strata** | **37.0%** |
-| D1 | not reported without `--repo` | see below |
+| D3, all 653 | **complete census of all three former strata** | **36.1%** |
+| D1 | not reported without `--repo`, and 0 findings with it | see below |
 
-**Everything is reported now.** Nothing is hidden, so what you see is the whole 37.0%.
-Collapsing the tiers raised the default output from 247 findings to 653 and *lowered* the
-false rate a reader experiences from 46.2% to 37.0%, because the hidden tier was the
+**Everything is reported now.** Nothing is hidden, so what you see is the whole 36.1%.
+Collapsing the tiers raised the default output from 238 findings to 653 and *lowered* the
+false rate a reader experiences from 44.1% to 36.1%, because the hidden tier was the
 better one.
 
 Two samples along the way were notably off, and both were caught only by censusing the
-thing they estimated. An uncapped n=30 sample put MEDIUM at 70%; the census says 55.6%, 14
+thing they estimated. An uncapped n=30 sample put MEDIUM at 70%; the census says 52.8%, 17
 points out and near the edge of its own interval. A n=15 sample put LOW at 47% `[25, 70]`;
 the census says 31.6%. Small samples were the cost even after the per-repository cap was
 removed.
@@ -117,7 +141,35 @@ claim, but unlike D4 the tool can check it: `--repo` reads the required contexts
 detector deleted. **Without `--repo`, deadgate is a one-detector tool**, and the table
 above should be read that way.
 
-D3 is the only detector that produces HIGH.
+#### With `--repo`, measured: it reports nothing on 275 repositories
+
+The gate was run against live branch protection for all 373 findings, 2026-10-09.
+
+| | |
+|---|---|
+| 73 repos carry D1 findings | 49 UNREADABLE, 24 PROTECTED, **0** where we have admin |
+| verdicts over the 373 | UNREADABLE 237, AMBIGUOUS 126, **REQUIRED 10** |
+| the 10 on a complete checkout | **0** |
+
+All ten were WordPress/gutenberg `*-status-check` jobs. They appeared only because the
+corpus cache stores workflow YAML without the `scripts/` directory beside it. On a real
+tree `_script_reads_status` reads `ci-status-check.js`, finds it listing the run's jobs
+and checking their conclusions, and suppresses all three before the finding is built.
+
+The attribution itself is sound and worth stating, because it is the part that could have
+been broken and was not: the required context is `Unit Tests - Status Check`, the job key
+is `unit-status-check`, and `derive()` joined them through the `name:` field.
+
+So `--repo` is not a mode that makes D1 useful. **It is a mode in which D1 has never
+reported a finding on a real repository.** It is kept because the gate is correct, not
+because it is productive, and `tests/test_d1_gate_live_shape.py` pins both directions
+against the captured live payload.
+
+`NOT_REQUIRED` is a third state and it is **unreachable here**: clearing a finding needs
+`complete=True`, which needs admin on both endpoints. Of 43 repositories we do
+administer, 36 answer 404 "not protected" and 7 answer 403 because private-repo
+protection needs a paid plan. None carries a required status check, so that branch has
+never run against live data anywhere reachable from this machine.
 
 Every finding carries a reproduction. A finding without one is an opinion, and this tool
 does not emit opinions.
@@ -164,25 +216,27 @@ On a repository you do not administer, only the first answers. It says nothing a
 protection, so an empty result does not mean the branch is unprotected. That asymmetry decides
 what the tier is allowed to claim:
 
-- a **match proves** the check is required, so a MEDIUM finding escalates to HIGH
+- a **match proves** the check is required
 - **no match proves nothing** unless the required set is complete, which needs admin on both
-  endpoints. Without that, the verdict is AMBIGUOUS and the severity does not move
+  endpoints. Without that, the verdict is AMBIGUOUS
 
-Only MEDIUM moves. MEDIUM is the tier that means "the workflow file does not say", so it is the
-only one this evidence can settle. A structural HIGH keeps its severity even when a check is not
-required, because protection can be added later and may be configured where this API does not
-reach. A structural LOW keeps its severity because a release pipeline that skips on purpose does
-not become a merge gate by appearing in a list.
+This tier used to move a severity: MEDIUM escalated to HIGH on a match and dropped to LOW on a
+complete miss, because MEDIUM was the tier that meant "the workflow file does not say". With the
+tiers gone it decides exactly one thing, whether a D1 finding is reported at all, and annotates
+every finding with the verdict it reached.
 
 ### Verdicts
 
-| verdict | meaning | severity |
+| verdict | meaning | effect |
 |---|---|---|
-| `REQUIRED` | a derived check name matches a required context | MEDIUM becomes HIGH |
-| `NOT_REQUIRED` | complete required set, no match | MEDIUM becomes LOW |
-| `UNPROTECTED` | complete, and the branch requires nothing at all | MEDIUM becomes LOW |
-| `AMBIGUOUS` | the name could not be derived, or the set is incomplete | unchanged |
-| `UNREADABLE` | the API did not answer | unchanged |
+| `REQUIRED` | a derived check name matches a required context | the only verdict that lets D1 report |
+| `NOT_REQUIRED` | complete required set, no match | D1 suppressed. Unreachable without admin |
+| `UNPROTECTED` | complete, and the branch requires nothing at all | D1 suppressed. Unreachable without admin |
+| `AMBIGUOUS` | the name could not be derived, or the set is incomplete | D1 suppressed |
+| `UNREADABLE` | the API did not answer | D1 suppressed |
+
+A D3 finding is reported whatever the verdict says; the verdict is printed beside it as context
+and never gates it.
 
 ### Why it reports contexts it could not attribute
 
@@ -618,5 +672,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 212 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 223 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.

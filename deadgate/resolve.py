@@ -1,14 +1,24 @@
 """Join a structural finding to what the branch actually requires.
 
 The structural tier reports the SHAPE of a dead gate. This tier answers the question the
-workflow file cannot: was anything relying on that job. Only MEDIUM moves, because MEDIUM is
-precisely the tier that means "the file does not say". A structural HIGH keeps its severity
-even when a check is not required, since protection can be added later and may be configured
-where this API does not reach; a structural LOW keeps its severity because a release pipeline
-that skips on purpose does not become a merge gate by being listed.
+workflow file cannot: was anything relying on that job.
+
+It used to MOVE a severity. MEDIUM escalated on a match and dropped on a complete miss,
+because MEDIUM was the tier that meant "the file does not say", while a structural HIGH or
+LOW held, protection being addable later and a release pipeline not becoming a merge gate by
+being listed. With the tiers collapsed it decides one thing: whether a D1 finding is reported
+at all. `severity` and `structural` on Resolution are vestigial and equal; `moved` is always
+False. They are kept so the dataclass stays a stable shape for the tests that pin the
+verdicts, and because nothing is gained by churning a field that no caller reads.
 
 Resolution never downgrades on an absence it cannot vouch for. Absence of a match means
 "not required" only when the required set is COMPLETE; otherwise it is AMBIGUOUS.
+
+Measured 2026-10-09 over all 373 D1 findings with live protection: REQUIRED 10, AMBIGUOUS
+126, UNREADABLE 237, and the 10 all vanish on a complete checkout where the class-7 script
+suppression can run. NOT_REQUIRED and UNPROTECTED need `complete=True` and so need admin, and
+no repository reachable from here has both admin and a required status check. Those two
+branches have never run against live data.
 """
 from __future__ import annotations
 

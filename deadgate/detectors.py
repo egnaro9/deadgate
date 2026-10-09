@@ -190,14 +190,22 @@ _API_STATUS_READ = re.compile(
 def _token_in_scope(job: dict, step: dict) -> bool:
     """Is a GitHub token available to this step?
 
-    Either env (job or step) or a `permissions:` block granting it, since
+    JOB-level env, or the step itself naming the token anywhere, since
     `secrets.GITHUB_TOKEN` is reachable by any step that names it.
+
+    `step.get("env")` used to be checked alongside the job's and was REDUNDANT:
+    `_job_blob(step)` serialises the step including its env, so everything the step
+    branch could match the blob already matched. A mutation that emptied the whole loop
+    survived all 221 tests, which is how both halves of that came out: the step branch
+    could never contribute, and the JOB branch is load-bearing and had no test. It is
+    the `base / rel` lesson a second time, a redundant candidate sitting next to a real
+    one and hiding that nothing covered either.
     """
-    for env in (job.get("env"), step.get("env")):
-        if isinstance(env, dict) and any(
-                "GITHUB_TOKEN" in str(k).upper() or "GITHUB_TOKEN" in str(v).upper()
-                for k, v in env.items()):
-            return True
+    env = job.get("env")
+    if isinstance(env, dict) and any(
+            "GITHUB_TOKEN" in str(k).upper() or "GITHUB_TOKEN" in str(v).upper()
+            for k, v in env.items()):
+        return True
     return "GITHUB_TOKEN" in _job_blob(step).upper()
 
 
