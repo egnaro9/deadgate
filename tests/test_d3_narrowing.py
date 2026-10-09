@@ -23,10 +23,17 @@ import textwrap
 
 import yaml
 
-from deadgate.detectors import _masked_status_can_matter, scan_workflow
+from deadgate.detectors import scan_workflow
 
 
 def _high(run: str) -> list:
+    """Historically "is this HIGH". With the tiers collapsed it is "is this reported".
+
+    The severity model was removed after all three D3 strata were censused: HIGH 30.9%
+    false, LOW 31.6%, MEDIUM 55.6%. HIGH's interval overlapped the merged non-HIGH tier,
+    LOW was indistinguishable from HIGH, and the one real separation was MEDIUM being
+    WORSE, an artefact of severity short-circuiting on the workflow's trigger. So these
+    tests now assert presence, not tier."""
     doc = yaml.safe_load(textwrap.dedent(f"""
         on: [pull_request]
         jobs:
@@ -37,7 +44,7 @@ def _high(run: str) -> list:
                 run: |
 {textwrap.indent(run.strip(), " " * 18)}
         """))
-    return [f for f in scan_workflow(doc) if f.detector == "D3" and f.severity == "HIGH"]
+    return [f for f in scan_workflow(doc) if f.detector == "D3"]
 
 
 # --- the shapes that must STAY high -----------------------------------------
@@ -90,38 +97,20 @@ def test_an_if_with_a_numeric_test_stays_high():
 
 # --- the shapes that must NOT be high ---------------------------------------
 
-def test_a_pipeline_whose_output_goes_nowhere_is_not_high():
-    """`_d3_severity` reads `exit 1` from ANYWHERE in the step, so one exit at the bottom
-    used to promote every log-extraction pipeline above it."""
-    assert not _high('grep -E "warn" logs/install.log | tail -60\nexit 1')
 
 
-def test_a_captured_value_never_used_again_is_not_high():
-    assert not _high('DMG="$(ls dl/*.dmg | head -1)"\nexit 1')
 
 
-def test_a_captured_value_that_is_only_printed_is_not_high():
-    assert not _high('SCORE=$(cat r.json | jq -r .score)\necho "score: $SCORE"\nexit 1')
 
 
-def test_a_bare_test_statement_fails_loudly_so_is_not_high():
-    """Verified by running bash: a bare `test x = y` that fails exits the step under -e,
-    so an empty captured value surfaces rather than passing silently."""
-    assert not _high('actual="$(sha256sum f | cut -d\' \' -f1)"\ntest "$actual" = "$expected"')
 
 
-def test_a_default_applied_at_the_use_site_is_not_high():
-    assert not _high('words="$(wc -w < f | tr -d \' \')"\nif [ "${words:-0}" -gt 300 ]; then exit 1; fi')
 
 
 # --- the predicate itself ---------------------------------------------------
 
-def test_predicate_rejects_a_line_that_consumes_nothing():
-    assert not _masked_status_can_matter("ls -la /tmp | head -10", "ls -la /tmp | head -10")
 
 
-def test_predicate_accepts_a_redirect():
-    assert _masked_status_can_matter("cmd | jq . > out.json", "cmd | jq . > out.json")
 
 
 # ---------------------------------------------------------------------------

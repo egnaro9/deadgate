@@ -34,7 +34,20 @@ class Finding:
     title: str
     detail: str
     repro: str
-    severity: str = "HIGH"
+    # There is no severity any more, and this field is kept only so existing callers do
+    # not break. Every D3 stratum was censused and the tiers did not rank anything:
+    #
+    #     HIGH    n= 94   30.9% false  [22.4, 40.8]
+    #     LOW     n=415   31.6% false  [27.3, 36.2]   indistinguishable from HIGH
+    #     MEDIUM  n=153   55.6% false  [47.6, 63.2]   the only tier that separated, worst
+    #
+    # HIGH's interval overlaps the merged non-HIGH tier, so the loudest tier was not
+    # reliably better than everything else. The one real separation was MEDIUM being
+    # WORSE, which came from `_d3_severity` short-circuiting on `_on_pull_request` before
+    # it looked at the finding at all: the axis measured the workflow's trigger, not
+    # correctness. A severity that hides the better findings behind --all and shouts the
+    # worse ones is worse than none.
+    severity: str = "FINDING"
 
 
 def _truthy_always(cond) -> bool:
@@ -123,24 +136,6 @@ _NEEDS_NAMED = re.compile(r"needs\.([A-Za-z0-9_\-]+)\.(?:result|outputs)")
 _NEEDS_WILDCARD = re.compile(r"needs\.\*\.(?:result|outputs)")
 
 
-def _referenced_needs(text: str, needs: list[str]) -> set[str]:
-    """Which of this job's `needs` does the text actually consult?
-
-    Suggested by Arhan Canli in the dev.to thread on the write-up, and it is a better
-    shape than what it replaces. `needs.X.result`, `needs.*` and `toJSON(needs)` are one
-    rule, not three patterns to be discovered one outage at a time: compare the set of
-    need ids a job references against its `needs:` list and report only the unreferenced
-    ones. The spelling stops mattering.
-
-    It is also strictly more precise than the boolean it replaces. `_reads_any_upstream_state`
-    was all-or-nothing, so a gate naming eight of its nine needs suppressed the finding
-    about the ninth, which is the one nobody checks.
-    """
-    if _NEEDS_WILDCARD.search(text) or _NEEDS_WHOLE_CONTEXT.search(text):
-        return set(needs)                      # both forms consult every upstream at once
-    return set(_NEEDS_NAMED.findall(text)) & set(needs)
-
-
 def _reads_any_upstream_state(text: str) -> bool:
     """True when the text consults any upstream's result or outputs, by name, by wildcard, or
     by serialising the whole `needs` context."""
@@ -190,20 +185,6 @@ _API_STATUS_READ = re.compile(
     r'|\bcheck-runs\b'                         # the checks API
     r'|\bcommits/[^\n"\'`]{0,160}?/status\b',  # combined status
     re.I)
-
-
-_ONE_STEP_DOWN = {"HIGH": "MEDIUM", "MEDIUM": "LOW", "LOW": "LOW"}
-
-
-def _demote(sev: str) -> str:
-    """One tier down, from wherever the finding actually sits.
-
-    The class-7 guard first wrote `"MEDIUM" if sev == "HIGH" else sev`, which became a
-    silent no-op the moment D1 stopped producing a structural HIGH: the guard still ran,
-    still appended its note, and changed nothing. Two tests caught it by asserting the
-    demoted severity was strictly below the baseline rather than equal to a literal.
-    """
-    return _ONE_STEP_DOWN.get(sev, sev)
 
 
 def _token_in_scope(job: dict, step: dict) -> bool:
@@ -302,8 +283,8 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
         if not skippable:
             continue
         text = _job_blob(job)
-        # All-or-nothing on purpose, and `_referenced_needs` above is the per-name model
-        # that is deliberately NOT used here.
+        # All-or-nothing on purpose. A per-name model was built and measured here and is
+        # now deleted rather than left sitting unused.
         #
         # Arhan Canli's point in the dev.to thread is right in principle: needs.X.result,
         # needs.* and toJSON(needs) are one rule, so comparing the referenced set against
@@ -327,24 +308,24 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
         # to jobs that are plausibly gates.
         if _reads_any_upstream_state(text):
             continue
-        sev = _d1_severity(name, job, doc or {}, _workflow_has_any_gate(jobs))
         # Class 7: the job may consult the API instead of `needs`, in a script this
         # tool cannot parse. Only considered when the job announces itself as a gate,
         # so an ordinary job running ./build.sh is untouched.
+        # Class 7 still SUPPRESSES when the script provably reads run status. What it
+        # used to do on top of that, demote an unverifiable claim a tier, has nowhere to
+        # go now that there are no tiers, so it only annotates.
         unverified = ""
         if _GATE_NAME.search(name):
             verdict = _script_reads_status(_delegated_status_scripts(job), base)
             if verdict is True:
                 continue
             if verdict is None and _delegated_status_scripts(job):
-                sev = _demote(sev)
                 unverified = (" NOTE: this job shells out to a script with a token in"
                               " scope, so whether it checks upstream status could not be"
                               " verified from the workflow alone.")
         for up in skippable:
             found.append(Finding(
                 detector="D1",
-                severity=sev,
                 job=name,
                 title="gate satisfied by a skipped job",
                 detail=(f"job '{name}' depends on '{up}', which is conditional. A skipped job "
@@ -564,62 +545,9 @@ def _result_is_emptiness_checked(var: str, body: str) -> bool:
 # one missed `export V=$(...)` and `for f in $(...)` as consumption.
 
 # The output of this line is captured, redirected, or exported, so a wrong value escapes.
-_LINE_CONSUMES = re.compile(
-    r">>?\s*\S"                                            # any redirect
-    r"|\$\{?GITHUB_(OUTPUT|ENV)\b"                          # crosses the step boundary
-    r"|\btee\b"                                            # tee writes a file
-    r"|\$\("                                                # captured by a substitution
-    r"|^\s*(?:export|local|declare|readonly)?\s*[A-Za-z_][A-Za-z0-9_]*=")
-
-_PRINT_ONLY = re.compile(r"^\s*(echo|printf)\b")
-_BARE_TEST = re.compile(r"^\s*(test\s|\[\s|\[\[\s)")
-_IS_CONDITION = re.compile(r"^\s*(if|elif|while|until)\b|\bif\s+\[|&&|\|\|")
 
 
-def _every_use_is_safe(var: str, body: str, assign_line: str) -> bool:
-    """True when every use of `var` either fails loudly on empty or cannot matter.
 
-    Deliberately conservative: anything not provably safe keeps the finding. A bare
-    command argument is NOT safe, because the corpus has it both ways. `helm push "$PKG"`
-    fails loudly on an empty argument; `ninja -C "$DIR" $TARGETS` silently builds the
-    default target and succeeds. The workflow cannot tell those apart, so both are kept.
-
-    The three safe shapes, each confirmed by running bash rather than by reasoning:
-      * never dereferenced at all
-      * only printed, with no redirect (a redirect is export, not print)
-      * a BARE `test x = y` or `[ x = y ]` statement, whose non-zero status is the step's.
-        Note `if [ "$X" -gt 1 ]` is NOT this: `set -e` is suspended in an if-condition, so
-        an empty X makes `[` error, the else branch is taken, and the check passes
-        silently. That distinction was wrong in the first census pass and cost two labels.
-    """
-    rest = body.replace(assign_line, "", 1)
-    uses = [ln.strip() for ln in rest.splitlines()
-            if re.search(rf"\$\{{?{re.escape(var)}\b", ln)]
-    if not uses:
-        return True
-    for use in uses:
-        if re.search(rf"\$\{{{re.escape(var)}:[-=]", use):
-            continue                                        # ${var:-default} applied
-        redirects = re.search(r">>?\s*\S|\$\{?GITHUB_(OUTPUT|ENV)\b", use)
-        if _PRINT_ONLY.match(use) and not redirects:
-            continue
-        if "GITHUB_STEP_SUMMARY" in use and not re.search(r"\$\{?GITHUB_(OUTPUT|ENV)\b", use):
-            continue                                        # a markdown summary is cosmetic
-        if _BARE_TEST.match(use) and not _IS_CONDITION.match(use):
-            continue
-        return False
-    return True
-
-
-# `cmd | grep -q PATTERN` does not mask anything, and that is demonstrable rather than
-# likely. When the head fails it produces no output, grep finds no match and exits 1, so
-# the pipeline fails exactly when the head does:
-#
-#     $ nosuchcommand 2>/dev/null | grep -q arm64 ; echo $?
-#     1
-#
-# grep -q is also asking about CONTENT, not status: it is the idiom for "does this output
-# contain X", and it short-circuits on the first match, which can SIGPIPE the head anyway.
 # All 6 such findings in D3's MEDIUM census were false, as were the ones in the HIGH
 # census, and no labelled true finding has this shape.
 #
@@ -632,44 +560,6 @@ def _tail_is_a_content_assertion(segment: str) -> bool:
     """True when the final filter is a `grep -q`, which fails when its input is empty."""
     tail = segment.rsplit("|", 1)[1].strip() if "|" in segment else ""
     return bool(_TAIL_IS_ASSERTION.match(tail))
-
-
-def _masked_status_can_matter(line: str, body: str) -> bool:
-    """Could this masked exit status change any outcome?"""
-    if not _LINE_CONSUMES.search(line):
-        return False
-    # The assignment must CAPTURE the pipeline, so the RHS has to open a command
-    # substitution. `WINEDEBUG=-all timeout 300 make check | tee x.log` is an inline
-    # ENV PREFIX, not a capture: reading it as one made the variable look unused and
-    # suppressed two real findings where a test command's failure is masked by tee.
-    # The simulation missed this because it only applied the assignment check to lines
-    # already classified as captures; the real detector applies it to every line.
-    assigned = re.match(
-        r"\s*(?:export|local|declare|readonly)?\s*([A-Za-z_][A-Za-z0-9_]*)=[\"']?\$\(", line)
-    if assigned and _every_use_is_safe(assigned.group(1), body, line):
-        return False
-    return True
-
-
-def _d3_severity(step: dict, job_name: str, job: dict, doc: dict, line: str) -> str:
-    """Does the masked exit status actually decide anything?
-
-    A pipeline whose result is exported, or which sits in a step that can fail the build,
-    masks a decision. A pipeline in a cleanup or logging step masks nothing anybody reads.
-    Tracing twenty D3 findings by hand, the ones that mattered all had a consumer and the
-    ones that did not were fire-and-forget.
-    """
-    body = str(step.get("run") or "")
-    if not _on_pull_request(doc):
-        return "LOW"
-    exported = "GITHUB_OUTPUT" in body or "GITHUB_ENV" in body
-    decides = bool(re.search(r"\bexit\s+[1-9]|::error::", body))
-    assigned = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)=", line)
-    consumed = bool(assigned and re.search(rf"\$\{{?{re.escape(assigned.group(1))}\b",
-                                           body.replace(line, "", 1)))
-    if (decides or exported or consumed) and _masked_status_can_matter(line, body):
-        return "HIGH"
-    return "MEDIUM"
 
 
 def _logical_lines(body: str):
@@ -754,14 +644,6 @@ def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
                     label = step.get("name") or line[:40]
                     found.append(Finding(
                         detector="D3",
-                        # Severity is judged on the LINE, while the finding names the
-                        # SEGMENT, and that split is deliberate. The segment is WHERE
-                        # the status is masked; the enclosing line is HOW the bad value
-                        # escapes, via an assignment or a redirect into $GITHUB_OUTPUT.
-                        # Judging severity on the segment alone was tried: it sees no
-                        # assignment and no export in `sha256sum f | cut -d' ' -f1`, so
-                        # HIGH fell from 94 to 30 and six tests went red.
-                        severity=_d3_severity(step, name, job, doc or {}, line),
                         job=name,
                         title="exit status masked by a pipe",
                         detail=(f"step '{label}' in job '{name}' ends a pipeline with "
@@ -812,17 +694,6 @@ def _on_pull_request(doc: dict) -> bool:
     if isinstance(on, dict):
         return "pull_request" in on or "pull_request_target" in on
     return False
-
-
-def _gate_severity(job_name: str, job: dict, doc: dict) -> str:
-    name = f"{job_name} {job.get('name') or ''}"
-    if _SHIP_JOB.search(name) and not _CHECK_JOB.search(name):
-        return "LOW"          # a release step, where skipping is usually the intent
-    if not _on_pull_request(doc):
-        return "LOW"          # never runs on a PR, so it is not a merge gate
-    if _CHECK_JOB.search(name):
-        return "HIGH"         # a PR verification job that can silently not run
-    return "MEDIUM"
 
 
 def _needs_of(job) -> list[str]:
@@ -904,36 +775,6 @@ def _jobs_whose_whole_chain_a_gate_watches(jobs: dict) -> set[str]:
         if any(want <= (watched | {gate}) for gate, watched in gates):
             covered.add(name)
     return covered
-
-
-def _workflow_has_any_gate(jobs: dict) -> bool:
-    """Does ANY job here consult upstream results at all?"""
-    return any(isinstance(j, dict) and _runs_like_a_gate(j.get("if"))
-               and _reads_any_upstream_state(_job_blob(j)) for j in jobs.values())
-
-
-def _d1_severity(name: str, job: dict, doc: dict, has_gate: bool) -> str:
-    """D1 severity, capped at MEDIUM for the same reason D4 is.
-
-    D1's finding asserts that a required check is satisfied by a skipped job. Whether the
-    job is a required check is precisely what a workflow file cannot say, so a structural
-    HIGH was a guess from a word in the job's name.
-
-    Measured before changing it, by hand-labelling the ENTIRE D1 stratum rather than
-    sampling it (54 findings, 29 jobs, so a census was cheaper than an argument about two
-    disagreeing samples): 65% false per finding even after the API-gate and never-runs
-    fixes. Eleven of the survivors are a single reporting job. That is not a tier that can
-    keep claiming HIGH on its own authority.
-
-    HIGH is therefore reserved for the escalation path in `protection.py`, where the job has
-    been attributed to a confirmed required check. Without that, MEDIUM when nothing in the
-    workflow consults upstream results at all, and LOW when the workflow does gate but not
-    over this upstream.
-    """
-    base = _gate_severity(name, job, doc)
-    if base == "LOW":
-        return "LOW"
-    return "MEDIUM" if not has_gate else "LOW"
 
 
 # D4 was REMOVED in 0.1.5, not demoted.

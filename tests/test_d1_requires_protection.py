@@ -63,7 +63,7 @@ def _run(tree, capsys, argv_extra=()):
 
 def test_d1_says_nothing_without_protection_data(tree, capsys):
     _, out = _run(tree, capsys)
-    assert "[D1/" not in out, out
+    assert "[D1]" not in out, out
 
 
 def test_the_workflow_really_does_trigger_d1(tree):
@@ -83,7 +83,7 @@ def test_d1_is_reported_when_protection_confirms_the_check(tree, capsys, monkeyp
     monkeypatch.setattr(cli, "fetch", lambda *a, **k: Protection(
         state=PROTECTED, required=frozenset({"verify-tests"}), complete=True))
     _, out = _run(tree, capsys, ("--repo", "o/r"))
-    assert "[D1/" in out, out
+    assert "[D1]" in out, out
     assert "REQUIRED" in out
 
 
@@ -97,7 +97,7 @@ def test_d1_stays_silent_when_protection_says_the_job_is_not_required(tree, caps
     monkeypatch.setattr(cli, "fetch", lambda *a, **k: Protection(
         state=PROTECTED, required=frozenset({"something-else"}), complete=True))
     _, out = _run(tree, capsys, ("--repo", "o/r"))
-    assert "[D1/" not in out, out
+    assert "[D1]" not in out, out
 
 
 def test_d3_is_unaffected_by_the_d1_gate(tmp_path, capsys):
@@ -113,4 +113,4 @@ def test_d3_is_unaffected_by_the_d1_gate(tmp_path, capsys):
                   echo "d=$(sha256sum f | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
         """))
     main([str(tmp_path), "--all"])
-    assert "[D3/" in capsys.readouterr().out
+    assert "[D3]" in capsys.readouterr().out

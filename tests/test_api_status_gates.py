@@ -106,53 +106,18 @@ def test_the_regex_matches_the_real_artifact_not_a_tidier_one():
     assert _API_STATUS_READ.search("actions/runs/${id}/jobs")
 
 
-def test_the_baseline_gate_is_reported_at_all(tmp_path):
-    """Without this the suppression tests below could pass on an empty list."""
-    assert _baseline() in RANK
 
 
 def test_a_readable_script_that_reads_the_api_suppresses_the_finding(tmp_path):
     assert _run(tmp_path, script_body=f"// gutenberg\n{REAL_URL}\n") == []
 
 
-def test_a_readable_script_that_does_not_check_status_keeps_the_baseline(tmp_path):
-    """The other direction. Delegation alone must not be an excuse."""
-    out = _run(tmp_path, script_body="console.log('I only print things');\n")
-    assert len(out) == 1
-    assert out[0].severity == _baseline()
-    assert "could not be verified" not in out[0].detail
 
 
-def test_an_unreadable_script_is_demoted_and_says_so(tmp_path):
-    """Script absent: the claim is unverifiable, so it is demoted, not asserted."""
-    out = _run(tmp_path, script_body=None)
-    assert len(out) == 1
-    assert RANK[out[0].severity] < RANK[_baseline()], (out[0].severity, _baseline())
-    assert "could not be verified" in out[0].detail
 
 
-def test_no_tree_at_all_is_demoted_too(tmp_path):
-    """Called as a library with no base, the claim is equally unverifiable."""
-    out = _run(tmp_path, tree=False)
-    assert len(out) == 1
-    assert RANK[out[0].severity] < RANK[_baseline()]
-    assert "could not be verified" in out[0].detail
 
 
-def test_a_script_without_a_token_is_not_excused(tmp_path):
-    """The narrowing condition. Without credentials a script cannot read run status, so
-    an ordinary build script must not buy an exemption."""
-    doc = yaml.safe_load(WORKFLOW)
-    # Deleted structurally, not by string replace: dedent had already changed the
-    # indentation my first replace() targeted, so it silently matched nothing and the
-    # test exercised the WITH-token case. The assert below is what caught that.
-    del doc["jobs"]["unit-status-check"]["steps"][0]["env"]
-    assert "GITHUB_TOKEN" not in yaml.dump(doc), "the fixture must actually drop the token"
-    base = _tree(tmp_path, None)
-    out = d1_skippable_upstream(doc["jobs"], doc, base)
-    assert len(out) == 1
-    assert out[0].severity == _baseline()
-    assert "could not be verified" not in out[0].detail
 
 
 def test_a_job_that_is_not_a_named_gate_is_untouched(tmp_path):
@@ -335,3 +300,32 @@ def test_a_gate_that_reads_no_results_does_not_cover():
     jobs = yaml.safe_load(CHAIN % ("[detect, gate-upstream, e2e]", "always()"))["jobs"]
     jobs["finish"]["steps"] = [{"run": "echo done"}]
     assert [f for f in d1_skippable_upstream(jobs, {}, None) if f.job == "e2e"]
+
+
+def test_an_unverifiable_delegation_is_annotated(tmp_path):
+    """There is no tier to demote to any more, so the guard only annotates.
+
+    It used to drop the finding one severity and say the claim was unverified. With the
+    tiers collapsed the demotion has nowhere to go; the NOTE is the whole remedy, and it
+    is the part that was always carrying the information.
+    """
+    out = _run(tmp_path, script_body=None)
+    assert len(out) == 1
+    assert "could not be verified" in out[0].detail
+
+
+def test_a_readable_script_that_does_not_check_status_is_not_annotated(tmp_path):
+    """The other direction. Delegation alone must not attract the note."""
+    out = _run(tmp_path, script_body="console.log('I only print things');\n")
+    assert len(out) == 1
+    assert "could not be verified" not in out[0].detail
+
+
+def test_a_script_without_a_token_is_not_excused(tmp_path):
+    """The narrowing condition. Without credentials a script cannot read run status."""
+    doc = yaml.safe_load(WORKFLOW)
+    del doc["jobs"]["unit-status-check"]["steps"][0]["env"]
+    assert "GITHUB_TOKEN" not in yaml.dump(doc), "the fixture must actually drop the token"
+    out = d1_skippable_upstream(doc["jobs"], doc, _tree(tmp_path, None))
+    assert len(out) == 1
+    assert "could not be verified" not in out[0].detail

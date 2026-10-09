@@ -26,33 +26,53 @@ be parsed**. A file it could not read is never counted as a file with no problem
 | D3 | a `run:` step ends a pipeline in a filter with no `pipefail` | the step's status is the filter's, so an upstream failure passes |
 
 **Two detectors have been removed rather than tuned**, each on hand-labelled evidence
-that it was never right: D4 on 0 true of 18 sampled (0.1.5), and D2 on 0 true of 27
+that it was never right: D4 on 0 true of 18 sampled, of which 8 false and **10 left
+unresolved** (0.1.5), and D2 on 0 true of 27
 censused (0.1.6). The shapes they fired on are described in those sections, including
 the one real hazard that is now undetected by design.
+
+### There is no severity any more
+
+Every D3 stratum was censused, and the tiers did not rank anything:
+
+| tier | n | false |
+|---|---|---|
+| HIGH | 94 | 30.9% `[22.4, 40.8]` |
+| LOW | 415 | 31.6% `[27.3, 36.2]` |
+| MEDIUM | 153 | **55.6%** `[47.6, 63.2]` |
+
+HIGH's interval overlaps the merged non-HIGH tier (38.0% `[34.1, 42.1]`), so the loudest
+tier was not reliably better than everything else. LOW was indistinguishable from HIGH.
+The one real separation was MEDIUM being **worse**, and that came from `_d3_severity`
+short-circuiting on whether the workflow runs on `pull_request` before it looked at the
+finding at all: the axis measured the trigger, not correctness.
+
+A severity that hid the better findings behind `--all` and shouted the worse ones is worse
+than none, so it is gone. `--all` is accepted and ignored. **D3 is 37.0% false overall**,
+245 of 662, and that is the number.
 
 ### Measured precision, so the table above is not the only claim
 
 Every figure below is hand-labelled. None is an estimate of an estimate.
 
-| detector | tier | basis | false |
-|---|---|---|---|
-| D3 | HIGH (94) | complete census | **30.9%** |
-| D3 | MEDIUM (144) | **complete census** | **54.9%** |
-| D3 | LOW (426) | uncapped sample, n=15 | **47%** `[25, 70]` |
-| D1 | **not reported without `--repo`** | see below | n/a |
+| detector | basis | false |
+|---|---|---|
+| D3, all 662 | **complete census of all three former strata** | **37.0%** |
+| D1 | not reported without `--repo` | see below |
 
-**What you see by default is about 45% false.** The CLI hides LOW without `--all`, so the
-default output is HIGH plus MEDIUM, 238 D3 findings, of which about 108 are wrong.
+**Everything is reported now.** Nothing is hidden, so what you see is the whole 37.0%.
+Collapsing the tiers raised the default output from 247 findings to 653 and *lowered* the
+false rate a reader experiences from 46.2% to 37.0%, because the hidden tier was the
+better one.
 
-MEDIUM is worse than HIGH, and both are now censused so that is exact. Whether MEDIUM is
-worse than LOW is still **not** established: LOW rests on n=15 and its interval `[25, 70]`
-contains MEDIUM's exact 54.9%. Settling it needs LOW measured properly, which has not been
-done.
+Two samples along the way were notably off, and both were caught only by censusing the
+thing they estimated. An uncapped n=30 sample put MEDIUM at 70%; the census says 55.6%, 14
+points out and near the edge of its own interval. A n=15 sample put LOW at 47% `[25, 70]`;
+the census says 31.6%. Small samples were the cost even after the per-repository cap was
+removed.
 
-An uncapped n=30 sample put MEDIUM at 70%; the census says 54.9%. Off by 14 points, inside
-its own interval but near the edge, which is the cost of n=30 even with the cap removed.
-
-MEDIUM is not one population. Classified by shape, it splits sharply:
+The former MEDIUM was not one population. Classified by shape, it split sharply, and the
+same shapes explain the whole detector:
 
 | shape | n | false |
 |---|---|---|
@@ -383,7 +403,8 @@ said the branch protection that job provides is decorative.
 That is not a precision problem a narrowing fixes. The detector's own gate test disagreed
 with its own finding text, every single time.
 
-D4 was removed on 0 true of 18 **sampled**. D2 goes on 0 true of 27 **censused**.
+D4 was removed on a sample of 18 that scored 0 true, 8 false and **10 arguable**. D2
+goes on 0 true of 27 **censused**, with no arguable bucket at all.
 
 Total output across the corpus: **1054 to 1027.** HIGH is unchanged at 125, all D3.
 
@@ -395,6 +416,18 @@ textual mentions and this function is named in two comments. A call-graph check 
 Both comments now name the function that actually does the work.
 
 ## 0.1.5 removes D4
+
+> **Correction.** This section originally read "0 defensible findings out of 18", and
+> that overstates it. The sample was **0 defensible, 8 false and 10 ARGUABLE**: ten of the
+> eighteen were never resolved. A later census of D3's HIGH stratum established that an
+> arguable bucket is not a random sample of its population, running 66% false against 34%
+> overall, enough to flip a verdict. The ten were probably mostly false; probably is not a
+> measurement. The sample was also drawn from D4's HIGH stratum, and severity has since
+> been measured to carry no quality signal, so that stratification means nothing either.
+>
+> **The removal still stands, on evidence that depends on neither:** 80% of D4's 932
+> findings describe a mechanism redundant with GitHub's needs-skip rule, which is
+> measured below and is severity-independent.
 
 **D4 is gone, not demoted.** It scored **0 defensible findings out of 18** in a
 pre-registered hand-labelled sample, and it was the largest detector by volume: **932
@@ -585,5 +618,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 228 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 212 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.

@@ -170,36 +170,12 @@ def _of(doc_text, det):
     return [x for x in _scan(_yaml.safe_load(doc_text)) if x.detector == det]
 
 
-def test_d1_pr_verification_is_medium_not_high():
-    """D1's structural ceiling is MEDIUM as of the census, not HIGH.
-
-    This asserted HIGH until the whole D1 stratium was hand-labelled: 65% false per
-    finding even after the API-gate and never-runs fixes, with 11 of the survivors a
-    single reporting job. "A required check is satisfied by a skipped job" needs a
-    protection configuration no workflow file carries, so HIGH now belongs only to the
-    escalation path in protection.py. Still MEDIUM rather than LOW, so the ship-job
-    branch below stays distinguishable and neither can be deleted silently.
-    """
-    f = _of(_D1_PR_TEST, "D1")
-    assert f and f[0].severity == "MEDIUM", f
-    assert f[0].severity != "HIGH"
 
 
-def test_d1_release_pipeline_is_low():
-    f = _of(_D1_RELEASE, "D1")
-    assert f and f[0].severity == "LOW", f
 
 
-def test_d3_exported_result_is_high():
-    """The masked value leaves the step, so something downstream consumes it."""
-    f = _of(_D3_EXPORTED, "D3")
-    assert f and f[0].severity == "HIGH", f
 
 
-def test_d3_fire_and_forget_is_not_high():
-    """A logging pipeline masks nothing anybody reads."""
-    f = _of(_D3_CLEANUP, "D3")
-    assert f and f[0].severity == "MEDIUM", f
 
 
 # ------------------------------------------------------------- what the corpus did NOT specify
@@ -236,66 +212,10 @@ def test_every_finding_carries_a_reproduction():
             assert f.detail.strip(), f"{path.name}: {f.detector} on {f.job} has no detail"
 
 
-def test_a_ship_job_on_a_pull_request_is_still_LOW():
-    """The ship-job guard was unreachable from the test written for it: that fixture is
-    tag-triggered, so `not _on_pull_request` already returned LOW one line later and deleting
-    the guard changed nothing. This reaches the guard itself."""
-    doc = yaml.safe_load("""
-on: [pull_request]
-jobs:
-  prepare:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo prep
-  publish:
-    needs: [prepare]
-    runs-on: ubuntu-latest
-    steps:
-      - run: twine upload dist/*
-""")
-    hits = [f for f in _findings(doc) if f.detector == "D1" and f.job == "publish"]
-    assert hits, "expected a D1 finding on the publish job"
-    assert all(f.severity == "LOW" for f in hits), (
-        f"a release job is not a merge gate even on a PR: got {[f.severity for f in hits]}")
 
 
-def test_a_check_job_on_a_pull_request_is_MEDIUM():
-    """The other side of the same guard, so neither branch can be deleted silently.
-
-    Was HIGH; capped at MEDIUM when the D1 census measured 65% false. A ship job stays
-    LOW, so the two branches remain distinct and the guard is still load-bearing.
-    """
-    doc = yaml.safe_load("""
-on: [pull_request]
-jobs:
-  prepare:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo prep
-  verify-tests:
-    needs: [prepare]
-    runs-on: ubuntu-latest
-    steps:
-      - run: pytest
-""")
-    hits = [f for f in _findings(doc) if f.detector == "D1" and f.job == "verify-tests"]
-    assert hits and all(f.severity == "MEDIUM" for f in hits), (
-        "a PR verification job that can silently not run is MEDIUM, capped by the census: "
-        f"got {[f.severity for f in hits]}")
 
 
-def test_d3_outside_a_pull_request_is_LOW():
-    """b4 is `on: [push]` and does fire D3, but the corpus asserted only the detector id, so
-    D3's first severity line was dead in the suite. cli.py hides LOW without --all, so this
-    guard decides whether the finding is printed at all."""
-    b4 = next(p for p in BROKEN if p.name.startswith("b4_"))
-    doc = yaml.safe_load(b4.read_text())
-    d3 = [f for f in _findings(doc) if f.detector == "D3"]
-    assert d3, "b4 should still fire D3"
-    assert all(f.severity == "LOW" for f in d3), (
-        f"a push-only workflow is not a merge gate: got {[f.severity for f in d3]}")
 
 
 @pytest.mark.parametrize("cond", [

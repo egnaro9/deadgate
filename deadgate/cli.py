@@ -28,9 +28,11 @@ def main(argv: list[str] | None = None) -> int:
                          "administer the required set is incomplete, so findings can only be "
                          "escalated, never cleared.")
     ap.add_argument("--branch", help="branch to read protection from (default: the repo's default)")
-    ap.add_argument("--all", action="store_true",
-                    help="include LOW findings (release and deploy pipelines, where a skip "
-                         "is usually the intent). Hidden by default so the output stays actionable.")
+    # `--all` used to hide the LOW tier. It is gone with the tiers: a census of all three
+    # strata found LOW at 31.6% false against MEDIUM at 55.6%, so the flag was hiding the
+    # BETTER findings and showing the worse ones. It is accepted and ignored so existing
+    # invocations do not break.
+    ap.add_argument("--all", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
     root = pathlib.Path(args.path)
@@ -105,30 +107,27 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if prot is not None:
                 job = ((doc or {}).get("jobs") or {}).get(x.job)
+                # resolve() still runs, but only to ATTRIBUTE the job to a required
+                # check. It no longer moves a severity, because there is no longer a
+                # severity to move.
                 r = resolve(x.severity, x.job, job if isinstance(job, dict) else {}, prot,
                             str(f) in callable_files)
                 why = f"{r.verdict}: {r.why}"
-                if r.moved:
-                    why = f"{r.structural} -> {r.severity}  {why}"
-                x = replace(x, severity=r.severity)
                 if x.detector == "D1" and r.verdict != REQUIRED:
                     suppressed += 1
                     continue
-            if x.severity == "LOW" and not args.all:
-                suppressed += 1
-                continue
             findings.append((f, x, why))
 
     if not args.quiet:
         for f, x, why in findings:
             rel = f.relative_to(root) if f.is_relative_to(root) else f
-            print(f"[{x.detector}/{x.severity}] {rel}::{x.job}  {x.title}")
+            print(f"[{x.detector}] {rel}::{x.job}  {x.title}")
             print(f"        {x.detail}")
             if why:
                 print(f"        branch:  {why}")
             print(f"        repro: {x.repro}\n")
 
-    tail = f", {suppressed} LOW hidden (use --all)" if suppressed else ""
+    tail = f", {suppressed} D1 finding(s) not attributable to a required check" if suppressed else ""
     print(f"{len(files)} workflow file(s), {len(findings)} finding(s){tail}")
 
     if prot is not None and prot.required:
