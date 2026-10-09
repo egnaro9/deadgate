@@ -32,8 +32,8 @@ the one real hazard that is now undetected by design.
 
 Measured precision, so the table above is not the only claim: D1 is **65% false per
 finding** on a complete 54-finding census and therefore never reaches HIGH on its own;
-D3 is **21-33% false per finding** on a sample of 25 and is the only detector that
-produces HIGH.
+D3's HIGH is **35% false** on a complete 125-finding census of that stratum, after
+the 0.1.7 narrowing took it down from 51%. It is the only detector that produces HIGH.
 
 Every finding carries a reproduction. A finding without one is an opinion, and this tool
 does not emit opinions.
@@ -141,6 +141,64 @@ is a separate and harder problem and is not in this release.
 
 ## Licence
 MIT
+
+## 0.1.7 narrows D3, on a complete census of its HIGH findings
+
+**All 125 D3 HIGH findings were hand-labelled. 51.2% were false.** The pre-registered rule
+said 50-80% means narrow, so D3 is narrowed rather than removed, and HIGH was not
+defensible until it was.
+
+The narrowing asks one question the old severity logic never asked: **can the masked exit
+status reach anything at all?**
+
+`_d3_severity` decided HIGH from `exit 1` or `GITHUB_OUTPUT` appearing *anywhere in the
+step*, and from the captured variable being dereferenced *anywhere in it*. Both are too
+coarse. One `exit 1` at the bottom of a step promoted every log-extraction pipeline above
+it, and "dereferenced" counted uses that fail loudly on an empty value.
+
+Two predicates now gate HIGH:
+
+- **The flagged line must consume its own output**: a redirect, `tee`, `$GITHUB_OUTPUT`,
+  a command substitution, or an assignment. `ls -la "$DIR" | head -10` reaches nothing,
+  whatever else the step does.
+- **If the line captures into a variable, some use of that variable must be able to
+  silently accept an empty value.** Never dereferenced, only printed, `${var:-default}`,
+  and a bare `test x = y` statement are all safe.
+
+| | before | after |
+|---|---|---|
+| D3 HIGH on the corpus | 125 | **94** |
+| false among them | 51.2% | **35.1%** |
+| true positives lost | | **0** |
+
+### Bash semantics, established by running bash
+
+A bare `test "$x" = "$y"` that fails exits the step under `set -e`, so an empty captured
+value surfaces. **`if [ "$x" -gt 100 ]` does not**: `set -e` is suspended inside an
+if-condition, so an empty value makes `[` print "integer expression expected", the else
+branch is taken, and the check passes silently with exit 0. The first census pass labelled
+that shape false by reasoning that `-e` would catch it, and it cost two labels.
+
+### Three versions of this rule were discarded before one shipped
+
+Each was evaluated against the 125 labels before being written into the detector, and each
+of the first three cost true positives:
+
+1. "Only printed" matched `echo "digest=${d}" >> "$GITHUB_OUTPUT"`, the single most
+   important true shape in the corpus. It would have suppressed 11 true findings.
+2. "Output goes nowhere" missed `export V=$(...)` and `for f in $(...)` as consumption,
+   losing 2.
+3. The assignment pattern matched an inline **environment prefix**: in
+   `WINEDEBUG=-all timeout 300 make check | tee x.log` it read `WINEDEBUG` as the captured
+   variable, found it unused, and suppressed a masked test failure. This one survived the
+   simulation and was caught only by running the real detector against the labels, because
+   the simulation applied the assignment check to fewer lines than the detector does.
+
+All three now have regression tests and are killed by mutation.
+
+### What is still not measured
+
+D3's MEDIUM (152) and LOW (408) are unmeasured. They are 560 of its 654 findings.
 
 ## 0.1.6 removes D2, on a census
 
@@ -375,5 +433,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 186 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 199 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.

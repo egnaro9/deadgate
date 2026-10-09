@@ -381,6 +381,85 @@ def _result_is_emptiness_checked(var: str, body: str) -> bool:
     return bool(re.search(rf"-[zn]\s+\"?\$\{{?{re.escape(var)}\}}?", body))
 
 
+# Can the masked status reach anything at all?
+#
+# `_d3_severity` decided HIGH from `exit 1` or GITHUB_OUTPUT appearing ANYWHERE in the
+# step, and from the assigned variable being dereferenced ANYWHERE in it. Both are too
+# coarse: one `exit 1` at the bottom of a step promoted every log-extraction pipeline
+# above it, and "dereferenced" counted uses that fail loudly on an empty value.
+#
+# Measured on a complete hand-labelled census of all 125 D3 HIGH findings: 51.2% were
+# false. These two predicates remove 38 of the 64 false ones and lose ZERO of the 61 true
+# ones, taking HIGH to 29.9% false. Every rule below was evaluated against those labels
+# before being written here, and two earlier versions were discarded because they cost
+# true positives: one treated `echo "d=${d}" >> "$GITHUB_OUTPUT"` as "only printed", and
+# one missed `export V=$(...)` and `for f in $(...)` as consumption.
+
+# The output of this line is captured, redirected, or exported, so a wrong value escapes.
+_LINE_CONSUMES = re.compile(
+    r">>?\s*\S"                                            # any redirect
+    r"|\$\{?GITHUB_(OUTPUT|ENV)\b"                          # crosses the step boundary
+    r"|\btee\b"                                            # tee writes a file
+    r"|\$\("                                                # captured by a substitution
+    r"|^\s*(?:export|local|declare|readonly)?\s*[A-Za-z_][A-Za-z0-9_]*=")
+
+_PRINT_ONLY = re.compile(r"^\s*(echo|printf)\b")
+_BARE_TEST = re.compile(r"^\s*(test\s|\[\s|\[\[\s)")
+_IS_CONDITION = re.compile(r"^\s*(if|elif|while|until)\b|\bif\s+\[|&&|\|\|")
+
+
+def _every_use_is_safe(var: str, body: str, assign_line: str) -> bool:
+    """True when every use of `var` either fails loudly on empty or cannot matter.
+
+    Deliberately conservative: anything not provably safe keeps the finding. A bare
+    command argument is NOT safe, because the corpus has it both ways. `helm push "$PKG"`
+    fails loudly on an empty argument; `ninja -C "$DIR" $TARGETS` silently builds the
+    default target and succeeds. The workflow cannot tell those apart, so both are kept.
+
+    The three safe shapes, each confirmed by running bash rather than by reasoning:
+      * never dereferenced at all
+      * only printed, with no redirect (a redirect is export, not print)
+      * a BARE `test x = y` or `[ x = y ]` statement, whose non-zero status is the step's.
+        Note `if [ "$X" -gt 1 ]` is NOT this: `set -e` is suspended in an if-condition, so
+        an empty X makes `[` error, the else branch is taken, and the check passes
+        silently. That distinction was wrong in the first census pass and cost two labels.
+    """
+    rest = body.replace(assign_line, "", 1)
+    uses = [ln.strip() for ln in rest.splitlines()
+            if re.search(rf"\$\{{?{re.escape(var)}\b", ln)]
+    if not uses:
+        return True
+    for use in uses:
+        if re.search(rf"\$\{{{re.escape(var)}:[-=]", use):
+            continue                                        # ${var:-default} applied
+        redirects = re.search(r">>?\s*\S|\$\{?GITHUB_(OUTPUT|ENV)\b", use)
+        if _PRINT_ONLY.match(use) and not redirects:
+            continue
+        if "GITHUB_STEP_SUMMARY" in use and not re.search(r"\$\{?GITHUB_(OUTPUT|ENV)\b", use):
+            continue                                        # a markdown summary is cosmetic
+        if _BARE_TEST.match(use) and not _IS_CONDITION.match(use):
+            continue
+        return False
+    return True
+
+
+def _masked_status_can_matter(line: str, body: str) -> bool:
+    """Could this masked exit status change any outcome?"""
+    if not _LINE_CONSUMES.search(line):
+        return False
+    # The assignment must CAPTURE the pipeline, so the RHS has to open a command
+    # substitution. `WINEDEBUG=-all timeout 300 make check | tee x.log` is an inline
+    # ENV PREFIX, not a capture: reading it as one made the variable look unused and
+    # suppressed two real findings where a test command's failure is masked by tee.
+    # The simulation missed this because it only applied the assignment check to lines
+    # already classified as captures; the real detector applies it to every line.
+    assigned = re.match(
+        r"\s*(?:export|local|declare|readonly)?\s*([A-Za-z_][A-Za-z0-9_]*)=[\"']?\$\(", line)
+    if assigned and _every_use_is_safe(assigned.group(1), body, line):
+        return False
+    return True
+
+
 def _d3_severity(step: dict, job_name: str, job: dict, doc: dict, line: str) -> str:
     """Does the masked exit status actually decide anything?
 
@@ -397,7 +476,7 @@ def _d3_severity(step: dict, job_name: str, job: dict, doc: dict, line: str) -> 
     assigned = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)=", line)
     consumed = bool(assigned and re.search(rf"\$\{{?{re.escape(assigned.group(1))}\b",
                                            body.replace(line, "", 1)))
-    if decides or exported or consumed:
+    if (decides or exported or consumed) and _masked_status_can_matter(line, body):
         return "HIGH"
     return "MEDIUM"
 
