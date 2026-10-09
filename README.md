@@ -418,9 +418,13 @@ of the first three cost true positives:
 
 All three now have regression tests and are killed by mutation.
 
-### What is still not measured
+### What is still not measured, as of 0.1.7
 
 D3's MEDIUM (152) and LOW (408) are unmeasured. They are 560 of its 654 findings.
+
+> Both were censused later: MEDIUM at 0.1.9 and LOW at 0.3.0. Nothing in D3 is unmeasured
+> now. The counts here are 0.1.7's and do not match today's 144 and 415, because the
+> `grep -q` suppression in 0.2.0 changed both.
 
 ## 0.1.6 removes D2, on a census
 
@@ -642,9 +646,9 @@ because it asked "does this job consult its upstreams?" and looked in too few pl
 
 | # | what was missed | found on |
 |---|---|---|
-| 1 | `needs.*.result` — the WILDCARD form, matched with `[A-Za-z0-9_-]+`, which cannot match `*` | Arize-ai/openinference |
+| 1 | `needs.*.result`, the WILDCARD form, matched with `[A-Za-z0-9_-]+`, which cannot match `*` | Arize-ai/openinference |
 | 2 | D4 judged a job alone, ignoring the workflow's own gate | Arize-ai/openinference |
-| 3 | `toJSON(needs)` — every upstream read with no `result` token anywhere; and gates written `always() && <cond>` rather than bare `always()` | astral-sh/ruff |
+| 3 | `toJSON(needs)`, every upstream read with no `result` token anywhere; and gates written `always() && <cond>` rather than bare `always()` | astral-sh/ruff |
 | 4 | PLACEMENT, not spelling: a reusable-workflow call has `uses:` and no `steps:`, passing `needs.X.result` through JOB-level `with:` | scikit-learn |
 
 1 and 2 shipped in 0.1.0 and were fixed in 0.1.1; 3 and 4 were found afterwards by pointing the
@@ -664,7 +668,7 @@ with: { job_status: "${{ needs.check-sdist.result }}" }
 ```
 
 Measured on one 275-repository, 4543-file corpus, both arms reading identical bytes:
-**4562 findings and 1104 HIGH before, 2917 and 658 after** — 40% of HIGH removed. On the
+**4562 findings and 1104 HIGH before, 2917 and 658 after**, 40% of HIGH removed. On the
 repositories that write their gates carefully the share is far higher: openinference went from
 13 HIGH to 1, ruff from 21 to 3, and in both cases the survivors are unrelated D3 findings.
 
