@@ -27,7 +27,6 @@ import yaml
 
 from deadgate.detectors import (
     d1_skippable_upstream,
-    d2_fanin_without_result_check,
 )
 
 CORRECT_GATE = textwrap.dedent("""
@@ -65,10 +64,6 @@ def jobs_of(src):
     return yaml.safe_load(src)["jobs"]
 
 
-def test_a_wildcard_fanin_gate_is_not_a_gate_that_cannot_fail():
-    jobs = jobs_of(CORRECT_GATE)
-    assert d2_fanin_without_result_check(jobs) == []
-    assert d1_skippable_upstream(jobs) == []
 
 
 
@@ -77,29 +72,6 @@ def test_a_wildcard_fanin_gate_is_not_a_gate_that_cannot_fail():
 
 
 
-def test_a_gate_that_reads_nothing_is_reported_even_on_always():
-    # always() with no result check at all: the original defect, still a finding. Built
-    # explicitly rather than by editing the string above, because a surgical replace that
-    # silently misses leaves a test asserting the wrong program.
-    src = textwrap.dedent("""
-        jobs:
-          changes:
-            runs-on: ubuntu-latest
-            steps: [{run: "true"}]
-          ci:
-            needs: [changes]
-            runs-on: ubuntu-latest
-            steps: [{run: "pytest"}]
-          ci-required:
-            needs: [changes, ci]
-            if: always()
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo "all good"
-    """)
-    jobs = jobs_of(src)
-    assert "needs.*.result" not in src, "the fixture must not contain the thing under test"
-    assert [f.detector for f in d2_fanin_without_result_check(jobs)] == ["D2"]
 
 
 
@@ -174,25 +146,8 @@ REUSABLE_CALL_GATE = textwrap.dedent("""
 """)
 
 
-def test_a_reusable_workflow_call_that_passes_a_result_is_not_reported():
-    # scikit-learn's check-sdist.yml. A job calling a reusable workflow has `uses:` and NO
-    # `steps:`, and passes state through JOB-level `with:`. The expression is one the detectors
-    # already understood; it simply lived where nothing looked, because step-level `with` was
-    # scanned and job-level `with` was not. The job reads its upstream, so nothing is reported.
-    jobs = jobs_of(REUSABLE_CALL_GATE)
-    assert "steps" not in jobs["update-tracker"], "fixture must be a reusable-workflow call"
-    assert "needs.check-sdist.result" in str(jobs["update-tracker"]["with"])
-    assert d2_fanin_without_result_check(jobs) == []
-    assert d1_skippable_upstream(jobs) == []
 
 
-def test_the_same_call_without_the_result_is_still_reported():
-    # The counter-case, so searching the whole job cannot become a blanket mute: drop the
-    # result from `with:` and the gate genuinely checks nothing.
-    src = REUSABLE_CALL_GATE.replace("job_status: ${{ needs.check-sdist.result }}",
-                                     "job_status: unknown")
-    assert "needs.check-sdist.result" not in src
-    assert [f.detector for f in d2_fanin_without_result_check(jobs_of(src))] == ["D2"]
 
 
 
@@ -209,36 +164,10 @@ def test_the_same_call_without_the_result_is_still_reported():
 # A lease-release job MUST run on always(); a summary that only ran on success would
 # summarise nothing.
 
-def _d2(jobname, run='echo "all good"'):
-    import deadgate.detectors as D
-    src = textwrap.dedent(f"""
-        on: [pull_request]
-        jobs:
-          build:
-            runs-on: ubuntu-latest
-            steps: [{{run: "make"}}]
-          {jobname}:
-            needs: [build]
-            if: always()
-            runs-on: ubuntu-latest
-            steps:
-              - run: {run}
-        """)
-    return [f for f in D.scan_workflow(yaml.safe_load(src)) if f.detector == "D2"]
 
 
-def test_d2_reporting_jobs_are_low():
-    for n in ("report", "e2e-log-summary", "aggregate-reports", "cost",
-              "release-lease", "publish", "notify", "upload-artifacts"):
-        f = _d2(n)
-        assert f and f[0].severity == "LOW", f"{n}: {f}"
 
 
-def test_d2_jobs_that_name_themselves_a_gate_stay_medium():
-    for n in ("ci-required", "required-tests", "status-check", "merge-queue",
-              "all-checks-pass", "all-checks-passed"):
-        f = _d2(n)
-        assert f and f[0].severity == "MEDIUM", f"{n}: {f}"
 
 
 def test_all_checks_pass_matches_without_the_trailing_ed():
@@ -251,33 +180,10 @@ def test_all_checks_pass_matches_without_the_trailing_ed():
     assert D._GATE_NAME.search("all-checks-passed")
 
 
-def test_a_gate_name_beats_a_reporting_word():
-    # "required-report" is a gate that also reports. The gate reading wins, because being
-    # wrong about a gate costs more than being wrong about a report.
-    f = _d2("required-report")
-    assert f and f[0].severity == "MEDIUM", f
 
 
-def test_d2_an_unrecognised_job_name_is_low_not_medium():
-    # The `else` branch, isolated. A job that neither names itself a gate nor looks like a
-    # report still only reaches LOW, because the MEDIUM claim needs a reason and "we could
-    # not tell what this job is" is not one.
-    f = _d2("widget-shuffler")
-    assert f and f[0].severity == "LOW", f
 
 
-def test_check_alone_is_not_a_gate_name():
-    # The gate pattern is deliberately narrow. `check` on its own matches change-detection
-    # jobs, which are not gates and whose always() is ordinary. sgl-project/sglang's
-    # `check-changes` was one of the nine false D2 findings in the sample, so widening
-    # `status-check` to `check` would put it straight back.
-    for n in ("check-changes", "check-files", "checkout-helper"):
-        f = _d2(n)
-        assert f and f[0].severity == "LOW", f"{n}: {f}"
-    # and the narrow forms still work
-    for n in ("status-check", "ci-required"):
-        f = _d2(n)
-        assert f and f[0].severity == "MEDIUM", f"{n}: {f}"
 
 
 # ---------------------------------------------------------------------------

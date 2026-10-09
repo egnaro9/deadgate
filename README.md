@@ -23,8 +23,17 @@ be parsed**. A file it could not read is never counted as a file with no problem
 | id | defect | why it matters |
 |----|--------|----------------|
 | D1 | a job depends on a skip-prone job and never reads `needs.*.result` | the dependency skips, reports Success, and the gate passes with nothing run |
-| D2 | a fan-in job runs on `always()` and never reads `needs.*.result` | it is green when the jobs it gates failed |
 | D3 | a `run:` step ends a pipeline in a filter with no `pipefail` | the step's status is the filter's, so an upstream failure passes |
+
+**Two detectors have been removed rather than tuned**, each on hand-labelled evidence
+that it was never right: D4 on 0 true of 18 sampled (0.1.5), and D2 on 0 true of 27
+censused (0.1.6). The shapes they fired on are described in those sections, including
+the one real hazard that is now undetected by design.
+
+Measured precision, so the table above is not the only claim: D1 is **65% false per
+finding** on a complete 54-finding census and therefore never reaches HIGH on its own;
+D3 is **21-33% false per finding** on a sample of 25 and is the only detector that
+produces HIGH.
 
 Every finding carries a reproduction. A finding without one is an opinion, and this tool
 does not emit opinions.
@@ -132,6 +141,52 @@ is a separate and harder problem and is not in this release.
 
 ## Licence
 MIT
+
+## 0.1.6 removes D2, on a census
+
+**D2 is gone. Every one of its 27 findings was hand-labelled: 0 true, 27 false, 0
+arguable.**
+
+Not a sample this time. 27 findings over 27 jobs and 14 repositories is the entire
+population on the 275-repo corpus, so there is no interval and no sampling design to argue
+about. That matters, because the sampling design is what corrupted the earlier numbers in
+this project (see 0.1.4).
+
+D2 fired on `always()` + `needs` + no result read. That is the signature of a correctly
+written reporting job, and the census says so without exception: report x3,
+summary/summarize x5, cost x7, merge-reports x2, aggregate_reports, e2e-log-summary,
+accessibility-report, audit-high-report, ci-timings, accept, publish, release_lease x2, a
+cleanup job restoring an environment policy, and one change-detection job.
+
+Three were read in full rather than judged by their names, because their names suggested a
+gate. All three handle upstream failure deliberately:
+
+| job | what it actually does |
+|---|---|
+| `KiroCrew accept` | proposes a baseline by PR; exits 0 with "No reports to accept." |
+| `trycua publish` | regenerates a support matrix and opens a ledger PR |
+| `hermes-agent ci-timings` | "Degraded runs produce no ci-timings.json, skip rather than fail" |
+
+### The structural argument, which is stronger than the rate
+
+D2 reached MEDIUM only when `_GATE_NAME` matched the job. **All 27 findings were LOW, so
+zero matched.** By its own severity logic, D2 never once found a job it believed was a
+gate, across 275 repositories and 4543 files, while the text of every finding it emitted
+said the branch protection that job provides is decorative.
+
+That is not a precision problem a narrowing fixes. The detector's own gate test disagreed
+with its own finding text, every single time.
+
+D4 was removed on 0 true of 18 **sampled**. D2 goes on 0 true of 27 **censused**.
+
+Total output across the corpus: **1054 to 1027.** HIGH is unchanged at 125, all D3.
+
+### Also removed: dead code that predates this release
+
+`_steps_text` was defined and never called, and had been dead since `_job_blob` superseded
+it. The zero-reference scan used when D4 was removed missed it, because that scan counted
+textual mentions and this function is named in two comments. A call-graph check finds it.
+Both comments now name the function that actually does the work.
 
 ## 0.1.5 removes D4
 
@@ -320,5 +375,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 198 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 186 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.

@@ -394,3 +394,48 @@ def test_the_outputs_gate_shape_reports_nothing():
 def test_the_corpus_holds_no_fixture_expecting_D4():
     for path in BROKEN:
         assert _expected(path) != "D4", f"{path.name} still expects a removed detector"
+
+
+# ---------------------------------------------------------------------------
+# D2 is REMOVED, on a CENSUS rather than a sample. This test keeps it removed.
+#
+# Every one of its 27 findings across 275 repositories was hand-labelled: 0 true, 27
+# false, 0 arguable. Its trigger, always() + needs + no result read, is the signature of a
+# correctly written reporting job: report, summary, cost, merge-reports, aggregate_reports,
+# release_lease, and a cleanup job restoring an environment policy that MUST run whatever
+# happened.
+#
+# The structural argument is stronger than the rate. D2 reached MEDIUM only when _GATE_NAME
+# matched; all 27 were LOW, so zero matched. By its own severity logic it never once found
+# a job it believed was a gate, while every finding it emitted said that job's branch
+# protection was decorative.
+
+D2_SHAPE = """
+on: [pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps: [{run: pytest}]
+  summary:
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps: [{run: "echo '## results' >> $GITHUB_STEP_SUMMARY"}]
+"""
+
+
+def test_no_detector_is_registered_as_D2():
+    from deadgate.detectors import active_detectors
+    assert not [f for f in active_detectors() if "d2" in f.__name__.lower()], \
+        "D2 was removed on a 0-of-27 census; re-adding needs new evidence"
+
+
+def test_a_reporting_job_on_always_reports_nothing():
+    """The shape D2 owned. A summary job running on always() is the design."""
+    assert [f.detector for f in _scan(_yaml.safe_load(D2_SHAPE))] == []
+
+
+def test_only_the_two_surviving_detectors_are_registered():
+    from deadgate.detectors import active_detectors
+    names = sorted(f.__name__ for f in active_detectors())
+    assert names == ["d1_skippable_upstream", "d3_pipe_masked_exit"], names

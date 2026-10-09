@@ -79,33 +79,6 @@ def _skip_prone(cond) -> bool:
     return not _NEVER_SKIPS.match(s)
 
 
-def _steps_text(job: dict) -> str:
-    """All text a job's steps can reference, so we can look for needs.* reads."""
-    out = []
-    for step in job.get("steps") or []:
-        if isinstance(step, dict):
-            out.append(str(step.get("run", "")))
-            out.append(str(step.get("if", "")))
-            env = step.get("env") or {}
-            if isinstance(env, dict):
-                out.extend(str(v) for v in env.values())
-            with_ = step.get("with") or {}
-            if isinstance(with_, dict):
-                out.extend(str(v) for v in with_.values())
-    out.append(str(job.get("env") or ""))
-    # The job-level if: is a result check too. A job guarded by
-    # `if: always() && needs.x.outputs.y` IS reading its upstream, and missing this
-    # was a LEAKY bug found by running against real workflows, not by the corpus.
-    out.append(str(job.get("if") or ""))
-    return "\n".join(out)
-
-
-# GitHub's documented fan-in idiom is the WILDCARD form, `needs.*.result`, which is how a
-# gate asks about every upstream at once. The detectors below originally matched only
-# `needs.<name>.result` via [A-Za-z0-9_-]+, which cannot match "*", so a correctly written
-# gate was reported as a gate that cannot fail. The message even said "never reads
-# needs.*.result" while failing to match that exact string. Measured on Arize-ai/openinference,
-# whose three `ci-required` jobs all read it twice: seven HIGH findings, every one false.
 _NEEDS_READ = re.compile(r"needs\.(?:\*|[A-Za-z0-9_\-]+)\.(?:result|outputs)")
 
 # The THIRD spelling, and the one that reads every upstream at once without containing the
@@ -133,8 +106,9 @@ def _job_blob(job) -> str:
           needs: [check-sdist]
           with: { job_status: "${{ needs.check-sdist.result }}" }   # <- read, and missed
 
-    `_steps_text` covers step-level `with` and env but not the job-level `with` that only
-    exists for reusable calls, so scikit-learn's gate read as checking nothing. Serialising the
+    The predecessor of this, `_steps_text`, covered step-level `with` and env but not
+    the job-level `with` that only exists for reusable calls, so scikit-learn's gate
+    read as checking nothing. It was superseded here and is now deleted. Serialising the
     whole job ends the game of enumerating surfaces: after needs.*.result, toJSON(needs) and
     this, the lesson is that the expression can live anywhere the schema allows.
     """
@@ -156,66 +130,6 @@ def _reads_any_upstream_state(text: str) -> bool:
 _GATE_NAME = re.compile(
     r"\b(required|all-?checks?-?pass(?:ed)?|status-?check|merge-?queue|ci-?required|gate)\b|"
     r"-required\b|\brequired-", re.I)
-
-
-def d2_fanin_without_result_check(jobs: dict,
-                                 base: pathlib.Path | None = None) -> list[Finding]:
-    """A fan-in job that runs on always() and never reads needs.*.result.
-
-    It will be GREEN when the jobs it gates FAILED. If it is a required check, the
-    branch protection it provides is decorative.
-    """
-    found = []
-    for name, job in jobs.items():
-        if not isinstance(job, dict):
-            continue
-        needs = job.get("needs")
-        if not needs or not _truthy_always(job.get("if")):
-            continue
-        text = _job_blob(job)
-        if _reads_any_upstream_state(text):
-            continue
-        label = f"{name} {job.get('name') or ''}"
-        # Severity, on the same rule D4 now follows: the finding asserts something about
-        # branch protection, and a workflow file cannot say which checks are required.
-        # Only a job that NAMES itself a gate reaches MEDIUM. Everything else is LOW,
-        # because always() + needs + no result read is equally the signature of every
-        # summary, report and cleanup job ever written: a lease-release must run whatever
-        # happened, and a summary that only ran on success would summarise nothing.
-        # Measured in a pre-registered sample of ten D2 HIGH findings: NINE were exactly
-        # that, named report, e2e-log-summary, aggregate_reports, summary, cost, publish
-        # and release_lease, and not one of the ten was defensible.
-        #
-        # An earlier version listed those names in a second regex. It was dead code: a
-        # reporting job does not match the gate pattern either, so it reached LOW by the
-        # same branch. The mutation deleting it SURVIVED, which is how that surfaced.
-        sev = "MEDIUM" if _GATE_NAME.search(label) else "LOW"
-        # Class 7, same guard as D1: a named gate may read the run's conclusions from
-        # the API in a script this tool cannot parse.
-        unverified = ""
-        if _GATE_NAME.search(label):
-            scripts = _delegated_status_scripts(job)
-            verdict = _script_reads_status(scripts, base)
-            if verdict is True:
-                continue
-            if verdict is None and scripts:
-                sev = _demote(sev)
-                unverified = (" NOTE: this job shells out to a script with a token in"
-                              " scope, so whether it checks upstream status could not be"
-                              " verified from the workflow alone.")
-        upstream = ", ".join(needs) if isinstance(needs, list) else str(needs)
-        found.append(Finding(
-            detector="D2",
-            severity=sev,
-            job=name,
-            title="fan-in gate cannot fail",
-            detail=(f"job '{name}' needs [{upstream}] and runs on always(), but no step reads "
-                    f"needs.*.result. It reports success even when [{upstream}] fail."
-                    + unverified),
-            repro=(f"Make any of [{upstream}] exit 1 and re-run. '{name}' still succeeds, "
-                   f"and any branch protection requiring it still passes."),
-        ))
-    return found
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +261,7 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
     _chain_watched = _jobs_whose_whole_chain_a_gate_watches(jobs)
     # A dependent whose own if: reads the upstream's outputs is deliberately gated on it:
     # the change-detection pattern, which is intentional, and whose real failure mode is
-    # D4's. That exclusion happens in _steps_text, which reads the job-level if:. An
+    # D4's. That exclusion happens in _job_blob, which serialises the whole job. An
     # explicit second check here was DEAD CODE and is removed; the A/B that was supposed
     # to prove it worked reported a difference of exactly zero and found it instead.
     for name, job in jobs.items():
@@ -724,8 +638,21 @@ def _d1_severity(name: str, job: dict, doc: dict, has_gate: bool) -> str:
 # and left it reporting. A detector that has never once been right is not
 # improved by saying it quietly; LOW still costs a reader attention, and 724 LOW
 # findings cost a lot of it. Removal is the honest form of a zero.
-DETECTORS = (d1_skippable_upstream, d2_fanin_without_result_check,
-             d3_pipe_masked_exit)
+# D2 was REMOVED in 0.1.6, on a CENSUS rather than a sample.
+#
+# Every one of its 27 findings across 275 repositories was hand-labelled: 0 true,
+# 27 false, 0 arguable. Its trigger, always() + needs + no result read, is the
+# signature of a correctly written reporting job, not of a broken gate: report,
+# summary, cost, merge-reports, aggregate_reports, release_lease, and a cleanup
+# job that restores an environment policy and MUST run whatever happened.
+#
+# The structural argument is stronger than the rate. D2 reached MEDIUM only when
+# _GATE_NAME matched the job; all 27 findings were LOW, so ZERO matched. By its own
+# severity logic it never once found a job it believed was a gate, while the text of
+# every finding it emitted said that job's branch protection was decorative.
+#
+# D4 went on 0 of 18 sampled. D2 goes on 0 of 27 CENSUSED, the whole population.
+DETECTORS = (d1_skippable_upstream, d3_pipe_masked_exit)
 
 
 def active_detectors():
@@ -740,8 +667,6 @@ def scan_workflow(doc: dict, base: pathlib.Path | None = None) -> list[Finding]:
     for fn in active_detectors():
         if fn is d1_skippable_upstream:
             out.extend(fn(jobs, doc, base))
-        elif fn is d2_fanin_without_result_check:
-            out.extend(fn(jobs, base))
         else:
             out.extend(fn(jobs, doc))
     return out

@@ -34,11 +34,7 @@ import textwrap
 
 import yaml
 
-from deadgate.detectors import (
-    _API_STATUS_READ,
-    d1_skippable_upstream,
-    d2_fanin_without_result_check,
-)
+from deadgate.detectors import _API_STATUS_READ, d1_skippable_upstream
 
 # Verbatim from WordPress/gutenberg, including the SPACES inside `${ ... }`. The first
 # version of _API_STATUS_READ used `[^\s"']*`, which cannot cross those spaces. It
@@ -197,34 +193,14 @@ D2_INLINE = D2_WORKFLOW.replace(
     "run: npm run ci-status-check")
 
 
-def _d2(workflow, base):
-    return d2_fanin_without_result_check(yaml.safe_load(workflow)["jobs"], base)
 
 
-def test_d2_baseline_reports_the_always_gate():
-    out = _d2(D2_INLINE, None)
-    assert len(out) == 1 and out[0].severity in RANK, out
 
 
-def test_d2_suppresses_when_the_script_reads_the_api(tmp_path):
-    base = _tree(tmp_path, f"// gutenberg\n{REAL_URL}\n")
-    assert _d2(D2_WORKFLOW, base) == []
 
 
-def test_d2_demotes_an_unverifiable_delegation(tmp_path):
-    base = _tree(tmp_path, script_body=None)
-    out = _d2(D2_WORKFLOW, base)
-    assert len(out) == 1
-    assert RANK[out[0].severity] < RANK[_d2(D2_INLINE, None)[0].severity]
-    assert "could not be verified" in out[0].detail
 
 
-def test_d2_keeps_severity_when_the_script_does_not_check_status(tmp_path):
-    base = _tree(tmp_path, "console.log('nope');\n")
-    out = _d2(D2_WORKFLOW, base)
-    assert len(out) == 1
-    assert out[0].severity == _d2(D2_INLINE, None)[0].severity
-    assert "could not be verified" not in out[0].detail
 
 
 # ---------------------------------------------------------------------------
