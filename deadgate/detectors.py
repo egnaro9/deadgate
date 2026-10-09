@@ -119,6 +119,28 @@ def _job_blob(job) -> str:
         return str(job)
 
 
+_NEEDS_NAMED = re.compile(r"needs\.([A-Za-z0-9_\-]+)\.(?:result|outputs)")
+_NEEDS_WILDCARD = re.compile(r"needs\.\*\.(?:result|outputs)")
+
+
+def _referenced_needs(text: str, needs: list[str]) -> set[str]:
+    """Which of this job's `needs` does the text actually consult?
+
+    Suggested by Arhan Canli in the dev.to thread on the write-up, and it is a better
+    shape than what it replaces. `needs.X.result`, `needs.*` and `toJSON(needs)` are one
+    rule, not three patterns to be discovered one outage at a time: compare the set of
+    need ids a job references against its `needs:` list and report only the unreferenced
+    ones. The spelling stops mattering.
+
+    It is also strictly more precise than the boolean it replaces. `_reads_any_upstream_state`
+    was all-or-nothing, so a gate naming eight of its nine needs suppressed the finding
+    about the ninth, which is the one nobody checks.
+    """
+    if _NEEDS_WILDCARD.search(text) or _NEEDS_WHOLE_CONTEXT.search(text):
+        return set(needs)                      # both forms consult every upstream at once
+    return set(_NEEDS_NAMED.findall(text)) & set(needs)
+
+
 def _reads_any_upstream_state(text: str) -> bool:
     """True when the text consults any upstream's result or outputs, by name, by wildcard, or
     by serialising the whole `needs` context."""
@@ -280,6 +302,29 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
         if not skippable:
             continue
         text = _job_blob(job)
+        # All-or-nothing on purpose, and `_referenced_needs` above is the per-name model
+        # that is deliberately NOT used here.
+        #
+        # Arhan Canli's point in the dev.to thread is right in principle: needs.X.result,
+        # needs.* and toJSON(needs) are one rule, so comparing the referenced set against
+        # the `needs:` list and reporting only unreferenced upstreams would stop the
+        # spelling from mattering, and would stop a gate naming eight of nine needs from
+        # suppressing the finding about the ninth.
+        #
+        # It was implemented and measured against this corpus before being rejected. It
+        # surfaces 396 additional findings, D1 going 373 to 769, and classified by job
+        # kind they are:
+        #
+        #     139  35%  ship/publish
+        #      96  24%  other
+        #      91  23%  reporting/cleanup
+        #      66  17%  check/test
+        #       4   1%  gate-named
+        #
+        # 58% are the two families the D2 census measured at 0 true of 27, and 1% are
+        # jobs that name themselves a gate. The rule is sound; the population it reaches
+        # in D1 is the one already proven false. Revisit if D1's trigger is ever narrowed
+        # to jobs that are plausibly gates.
         if _reads_any_upstream_state(text):
             continue
         sev = _d1_severity(name, job, doc or {}, _workflow_has_any_gate(jobs))

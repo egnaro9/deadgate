@@ -30,10 +30,31 @@ that it was never right: D4 on 0 true of 18 sampled (0.1.5), and D2 on 0 true of
 censused (0.1.6). The shapes they fired on are described in those sections, including
 the one real hazard that is now undetected by design.
 
-Measured precision, so the table above is not the only claim: D1 is **65% false per
-finding** on a complete 54-finding census and therefore never reaches HIGH on its own;
-D3's HIGH is **30.9% false** on a complete hand-labelled census of that stratum (94
-findings), down from 51.2% before the 0.1.7 narrowing. It is the only detector that produces HIGH.
+### Measured precision, so the table above is not the only claim
+
+Every figure below is hand-labelled. None is an estimate of an estimate.
+
+| detector | tier | basis | false |
+|---|---|---|---|
+| D3 | HIGH (94) | complete census | **30.9%** |
+| D3 | MEDIUM (153) | uncapped sample, n=30 | **70%** `[52, 83]` |
+| D3 | LOW (426) | uncapped sample, n=15 | **47%** `[25, 70]` |
+| D1 | all (373) | complete census of its 54 HIGH at 0.1.4 | **65%** |
+
+**What you see by default is about 55% false.** The CLI hides LOW without `--all`, so the
+default output is HIGH plus MEDIUM, 247 D3 findings, of which roughly 136 are wrong.
+
+MEDIUM being worse than HIGH is established: the intervals do not overlap. MEDIUM being
+worse than LOW is **not** established, and neither is LOW being worse than HIGH, because
+those intervals do overlap. The point estimates suggest the MEDIUM/LOW ordering is
+inverted; the sample is too small to say so.
+
+The MEDIUM and LOW samples were drawn **uncapped**, which reverses the design of every
+earlier sample here. A per-repository cap makes the estimator unbiased for the per-job
+rate and about 16 points low for the per-finding rate, which is the defect described in
+the 0.1.4 notes below.
+
+D1 never reaches HIGH on its own for the same reason its census found. It is the only detector that produces HIGH.
 
 Every finding carries a reproduction. A finding without one is an opinion, and this tool
 does not emit opinions.
