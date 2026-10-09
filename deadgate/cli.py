@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         jobs_by_file[str(f)] = (doc or {}).get("jobs") or {}
         if workflow_is_callable(doc):
             callable_files.add(str(f))
-        for x in scan_workflow(doc):
+        for x in scan_workflow(doc, base=root):
             why = ""
             if prot is not None:
                 job = ((doc or {}).get("jobs") or {}).get(x.job)

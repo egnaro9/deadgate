@@ -10,6 +10,7 @@ switched off, which is worse than not shipping it.
 """
 from __future__ import annotations
 
+import pathlib
 import re
 import os
 from dataclasses import dataclass
@@ -51,6 +52,23 @@ def _truthy_always(cond) -> bool:
 # the corpus had nothing like it.
 _NEVER_SKIPS = re.compile(r"^(always\(\)|!\s*cancelled\(\)|success\(\)\s*\|\|\s*failure\(\)|"
                           r"failure\(\)\s*\|\|\s*success\(\))$")
+
+
+# A job that can NEVER run. All three spellings appear in the corpus:
+#   rspack      check-cache   if: ${{ false }}   (a cache check kept but disabled)
+#   bootc       test-coreos   if: false          (disabled with a comment explaining why)
+#   hyperswitch runner_alpha  if: false          (optional connector tests, off)
+# A job that never runs cannot report success on anything, so every finding about it is
+# vacuous. Four of the 44 surviving D1 HIGH findings were this. YAML turns a bare `false`
+# into a bool and leaves `${{ false }}` a string, so both forms have to be recognised.
+_LITERAL_FALSE = re.compile(r"^\s*(?:\$\{\{)?\s*(?:false|0)\s*(?:\}\})?\s*$", re.I)
+
+
+def _never_runs(cond) -> bool:
+    """True when a job's `if:` is a literal false, in any of its spellings."""
+    if cond is False:
+        return True
+    return isinstance(cond, str) and bool(_LITERAL_FALSE.match(cond))
 
 
 def _skip_prone(cond) -> bool:
@@ -141,7 +159,15 @@ def _reads_any_upstream_state(text: str) -> bool:
     return bool(_NEEDS_READ.search(text) or _NEEDS_WHOLE_CONTEXT.search(text))
 
 
-def d2_fanin_without_result_check(jobs: dict) -> list[Finding]:
+# A job that announces itself as the thing branch protection points at. Narrow on purpose:
+# `check` alone is far too broad, and matched `check-changes`, which is change detection.
+_GATE_NAME = re.compile(
+    r"\b(required|all-?checks?-?pass(?:ed)?|status-?check|merge-?queue|ci-?required|gate)\b|"
+    r"-required\b|\brequired-", re.I)
+
+
+def d2_fanin_without_result_check(jobs: dict,
+                                 base: pathlib.Path | None = None) -> list[Finding]:
     """A fan-in job that runs on always() and never reads needs.*.result.
 
     It will be GREEN when the jobs it gates FAILED. If it is a required check, the
@@ -157,20 +183,152 @@ def d2_fanin_without_result_check(jobs: dict) -> list[Finding]:
         text = _job_blob(job)
         if _reads_any_upstream_state(text):
             continue
+        label = f"{name} {job.get('name') or ''}"
+        # Severity, on the same rule D4 now follows: the finding asserts something about
+        # branch protection, and a workflow file cannot say which checks are required.
+        # Only a job that NAMES itself a gate reaches MEDIUM. Everything else is LOW,
+        # because always() + needs + no result read is equally the signature of every
+        # summary, report and cleanup job ever written: a lease-release must run whatever
+        # happened, and a summary that only ran on success would summarise nothing.
+        # Measured in a pre-registered sample of ten D2 HIGH findings: NINE were exactly
+        # that, named report, e2e-log-summary, aggregate_reports, summary, cost, publish
+        # and release_lease, and not one of the ten was defensible.
+        #
+        # An earlier version listed those names in a second regex. It was dead code: a
+        # reporting job does not match the gate pattern either, so it reached LOW by the
+        # same branch. The mutation deleting it SURVIVED, which is how that surfaced.
+        sev = "MEDIUM" if _GATE_NAME.search(label) else "LOW"
+        # Class 7, same guard as D1: a named gate may read the run's conclusions from
+        # the API in a script this tool cannot parse.
+        unverified = ""
+        if _GATE_NAME.search(label):
+            scripts = _delegated_status_scripts(job)
+            verdict = _script_reads_status(scripts, base)
+            if verdict is True:
+                continue
+            if verdict is None and scripts:
+                sev = "LOW"
+                unverified = (" NOTE: this job shells out to a script with a token in"
+                              " scope, so whether it checks upstream status could not be"
+                              " verified from the workflow alone.")
         upstream = ", ".join(needs) if isinstance(needs, list) else str(needs)
         found.append(Finding(
             detector="D2",
+            severity=sev,
             job=name,
             title="fan-in gate cannot fail",
             detail=(f"job '{name}' needs [{upstream}] and runs on always(), but no step reads "
-                    f"needs.*.result. It reports success even when [{upstream}] fail."),
+                    f"needs.*.result. It reports success even when [{upstream}] fail."
+                    + unverified),
             repro=(f"Make any of [{upstream}] exit 1 and re-run. '{name}' still succeeds, "
                    f"and any branch protection requiring it still passes."),
         ))
     return found
 
 
-def d1_skippable_upstream(jobs: dict, doc: dict | None = None) -> list[Finding]:
+# ---------------------------------------------------------------------------
+# Class 7: upstream status read through the GitHub Actions API, not `needs`.
+#
+# WordPress/gutenberg's *-status-check jobs run
+#     node .github/workflows/scripts/ci-status-check.js --ignore '<names>'
+# which pages GET /repos/{repo}/actions/runs/{run_id}/jobs and fails if any job
+# concluded as anything other than success or skipped. The word `result` never
+# appears and `needs` is never consulted, so no pattern over the workflow can
+# find it -- the evidence is in a file this tool does not parse. Ten of the 54
+# D1 findings in the 179-HIGH corpus were this, all false, all one repository.
+#
+# The first six classes were "the expression exists and my regex missed it" and
+# were fixed by widening a pattern. This one is different in kind: D1's claim
+# ("never reads needs.X.result") is UNVERIFIABLE from the workflow alone once a
+# step shells out. So the fix narrows the claim instead of widening a pattern.
+#
+# Narrow on purpose, and the token is what makes it narrow: reading another
+# job's conclusion requires credentials. A script invoked WITHOUT a token in
+# scope cannot be checking run status, so it is not excused here. Without that
+# condition this would demote every job that runs ./build.sh.
+_SCRIPT_CALL = re.compile(
+    r"(?:^|[|;&]|\b(?:node|python3?|ruby|bash|sh|deno|bun|tsx|pwsh)\s+)"
+    r"(\.{0,2}[\w./-]*[\w-]+\.(?:js|mjs|cjs|ts|py|rb|sh|bash|ps1))\b")
+
+# Reading the current run's jobs, or any check/status, from the API.
+_API_STATUS_READ = re.compile(
+    # `[^\s]` was WRONG here and the control caught it: the real gutenberg script
+    # interpolates as `actions/runs/${ GITHUB_RUN_ID }/jobs`, with SPACES inside the
+    # braces, so a whitespace-forbidding class could never match the artifact. It
+    # matched the string I invented for the smoke test, which is the whole lesson.
+    r'actions/runs/[^\n"\'`]{0,160}?/jobs'
+    r'|\bgh\s+run\s+view\b'                  # gh run view --json jobs
+    r'|listJobsForWorkflowRun|getWorkflowRun'  # octokit
+    r'|\bcheck-runs\b'                         # the checks API
+    r'|\bcommits/[^\n"\'`]{0,160}?/status\b',  # combined status
+    re.I)
+
+
+def _token_in_scope(job: dict, step: dict) -> bool:
+    """Is a GitHub token available to this step?
+
+    Either env (job or step) or a `permissions:` block granting it, since
+    `secrets.GITHUB_TOKEN` is reachable by any step that names it.
+    """
+    for env in (job.get("env"), step.get("env")):
+        if isinstance(env, dict) and any(
+                "GITHUB_TOKEN" in str(k).upper() or "GITHUB_TOKEN" in str(v).upper()
+                for k, v in env.items()):
+            return True
+    return "GITHUB_TOKEN" in _job_blob(step).upper()
+
+
+def _delegated_status_scripts(job: dict) -> list[str]:
+    """Script paths this job shells out to with a token in scope.
+
+    These are the steps whose behaviour this tool cannot see. Returning the paths
+    rather than a bool lets the caller go and read them when the tree is available.
+    """
+    out = []
+    for step in (job.get("steps") or []):
+        if not isinstance(step, dict):
+            continue
+        run = step.get("run")
+        if not isinstance(run, str) or not _token_in_scope(job, step):
+            continue
+        for m in _SCRIPT_CALL.finditer(run):
+            out.append(m.group(1))
+    return out
+
+
+def _script_reads_status(paths: list[str], base: "pathlib.Path | None") -> bool | None:
+    """Does one of these scripts read upstream status from the API?
+
+    True  -- read it and it does; the job is a working gate and D1 must stay quiet.
+    False -- read them all and none does; the claim stands at full severity.
+    None  -- could not read them, so the claim is unverifiable and gets demoted.
+
+    Verifying beats guessing: when the tree is there this turns class 7 from a
+    false positive into a correct suppression, with the evidence actually read.
+    """
+    if base is None or not paths:
+        return None
+    seen = False
+    for rel in paths:
+        # One candidate, not two. The first spelling here was
+        # `base / rel.lstrip("./")`, which strips a CHARACTER SET and so turned
+        # ".github/..." into "github/...". A second `base / rel` candidate masked
+        # that, and the mutation reverting removeprefix to lstrip SURVIVED because
+        # pathlib already normalises a leading "./" -- the extra candidate could
+        # never contribute. Dead code found by its own surviving mutant, again.
+        try:
+            cand = base / rel
+            if cand.is_file():
+                seen = True
+                if _API_STATUS_READ.search(cand.read_text(errors="replace")):
+                    return True
+        except OSError:
+            continue
+    return False if seen else None
+
+
+def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
+                          base: pathlib.Path | None = None) -> list[Finding]:
     """A conditional job that something depends on, where the dependent never checks the result.
 
     GitHub documents that a skipped job reports Success and does not prevent a merge even
@@ -191,6 +349,9 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None) -> list[Finding]:
         needs = job.get("needs")
         if not needs:
             continue
+        # A dependent that can never run cannot falsely report success.
+        if _never_runs(job.get("if")):
+            continue
         needs_list = needs if isinstance(needs, list) else [needs]
         skippable = [n for n in needs_list if n in conditional]
         if not skippable:
@@ -199,6 +360,19 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None) -> list[Finding]:
         if _reads_any_upstream_state(text):
             continue
         sev = _gate_severity(name, job, doc or {})
+        # Class 7: the job may consult the API instead of `needs`, in a script this
+        # tool cannot parse. Only considered when the job announces itself as a gate,
+        # so an ordinary job running ./build.sh is untouched.
+        unverified = ""
+        if _GATE_NAME.search(name):
+            verdict = _script_reads_status(_delegated_status_scripts(job), base)
+            if verdict is True:
+                continue
+            if verdict is None and _delegated_status_scripts(job):
+                sev = "MEDIUM" if sev == "HIGH" else sev
+                unverified = (" NOTE: this job shells out to a script with a token in"
+                              " scope, so whether it checks upstream status could not be"
+                              " verified from the workflow alone.")
         for up in skippable:
             found.append(Finding(
                 detector="D1",
@@ -206,22 +380,45 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None) -> list[Finding]:
                 job=name,
                 title="gate satisfied by a skipped job",
                 detail=(f"job '{name}' depends on '{up}', which is conditional. A skipped job "
-                        f"reports Success, and '{name}' never reads needs.{up}.result."),
+                        f"reports Success, and '{name}' never reads needs.{up}.result."
+                        + unverified),
                 repro=(f"Open a PR where '{up}'s if: condition is false. '{up}' skips, "
                        f"'{name}' succeeds, and nothing ran."),
             ))
     return found
 
 
-_CANNOT_FAIL = re.compile(r"^\s*(echo|printf)\b")
+# Heads that cannot meaningfully fail, so masking their status masks nothing.
+# echo and printf were the original two; the rest come from sampled false positives
+# (`arch | sed`, `printf | sed`) and from commands that only fail on absurd input.
+_CANNOT_FAIL = re.compile(
+    r"^\s*(echo|printf|true|arch|pwd|hostname|whoami|id|uname|seq|yes|basename|dirname)\b")
+
+
+# A pipeline whose status IS the test. `if cmd | grep -q x; then` is not a masked exit
+# status, it is the idiom for asking a question, and the author wants exactly the filter's
+# verdict. Eight of the nineteen D3 false positives across two hand-labelled samples were
+# this shape, in `if`, `elif`, `while` and `until` conditions and behind a leading `!`.
+_CONDITION_LINE = re.compile(r"^\s*(if|elif|while|until)\b|^\s*!\s")
+
+# A value that is only printed. `echo "size: $(du -h x | cut -f1)"` masks du's status, and
+# what that costs is a wrong number in a log. Without a redirect into $GITHUB_OUTPUT,
+# $GITHUB_ENV or a file, nothing downstream can read it, so nothing downstream can be
+# misled by it.
+_ONLY_PRINTED = re.compile(r"^\s*echo\b(?!.*(>>|>|\$GITHUB_OUTPUT|\$GITHUB_ENV))")
+
 
 
 def _substitution_bodies(line: str) -> list[str]:
     """Bodies of $( ... ), innermost first, so a pipe inside one is analysed on its own."""
     out, stack = [], []
     i = 0
-    while i < len(line) - 1:
-        if line[i] == "$" and line[i + 1] == "(":
+    # `< len(line)`, not `< len(line) - 1`. The old bound never examined the FINAL
+    # character, so a substitution closing at end of line was never closed and this
+    # returned nothing. `X=$(cmd | filter)` almost always ends its line, which is the
+    # shape this function exists for, so the narrowing it feeds could hardly ever fire.
+    while i < len(line):
+        if line[i] == "$" and i + 1 < len(line) and line[i + 1] == "(":
             stack.append(i + 2); i += 2; continue
         if line[i] == ")" and stack:
             out.append(line[stack.pop():i])
@@ -282,6 +479,38 @@ def _d3_severity(step: dict, job_name: str, job: dict, doc: dict, line: str) -> 
     return "MEDIUM"
 
 
+def _logical_lines(body: str):
+    """Shell lines, joined where a pipeline continues onto the next one.
+
+    D3 read one PHYSICAL line at a time, and a pipeline is not always one line. Three
+    shapes in a hand-labelled sample broke it, all the same root cause:
+
+        x=$(printf '%s' "$B" | tr -d '\r' \\      backslash continuation
+              | sed -n 's/^A://p')
+
+        ad="$(git log ... |                        an unclosed $( carries on
+              cut -f2 | sort | uniq -d)"
+
+    Split per line, the detector sees `cut -f2 | sort | uniq -d)"` and believes the head is
+    `cut`, when the real head is `git log`. It then both misjudges whether that head can
+    fail and misses that the line is a continuation of an `if`. Joining first is the only
+    way the rest of the analysis is looking at a command.
+    """
+    buf = ""
+    for raw in body.splitlines():
+        buf = (buf + " " + raw.strip()) if buf else raw
+        t = buf.rstrip()
+        if t.endswith("\\"):
+            buf = t[:-1]
+            continue
+        if t.endswith("|") or buf.count("$(") > buf.count(")"):
+            continue
+        yield buf
+        buf = ""
+    if buf:
+        yield buf
+
+
 def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
     """A run: step whose exit status is the LAST command in a pipe, with no pipefail.
 
@@ -301,9 +530,11 @@ def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
             body = str(run)
             if re.search(r"set\s+[-a-z]*o?\s*[-a-z]*pipefail|set\s+-o\s+pipefail", body):
                 continue
-            for line in body.splitlines():
+            for line in _logical_lines(body):
                 line = line.strip()
                 if "|" not in line or line.startswith("#") or "||" in line:
+                    continue
+                if _CONDITION_LINE.search(line) or _ONLY_PRINTED.search(line):
                     continue
                 tail = line.rsplit("|", 1)[1].strip().split()
                 if not tail:
@@ -523,11 +754,16 @@ def active_detectors():
     return DETECTORS
 
 
-def scan_workflow(doc: dict) -> list[Finding]:
+def scan_workflow(doc: dict, base: pathlib.Path | None = None) -> list[Finding]:
     jobs = (doc or {}).get("jobs") or {}
     if not isinstance(jobs, dict):
         return []
     out = []
     for fn in active_detectors():
-        out.extend(fn(jobs, doc) if fn is not d2_fanin_without_result_check else fn(jobs))
+        if fn is d1_skippable_upstream:
+            out.extend(fn(jobs, doc, base))
+        elif fn is d2_fanin_without_result_check:
+            out.extend(fn(jobs, base))
+        else:
+            out.extend(fn(jobs, doc))
     return out
