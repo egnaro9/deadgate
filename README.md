@@ -133,6 +133,34 @@ is a separate and harder problem and is not in this release.
 ## Licence
 MIT
 
+## 0.1.3 closes a fifth class, and D4 stops claiming HIGH
+
+**Upgrade from anything earlier.** Five times now this tool has reported correct CI as
+broken, each time because it asked "does this job consult its upstreams?" and looked in too
+few places.
+
+| # | what was missed | found on |
+|---|---|---|
+| 1 | `needs.*.result`, the WILDCARD form, matched with `[A-Za-z0-9_-]+` which cannot match `*` | Arize-ai/openinference |
+| 2 | D4 judged a job alone, ignoring the workflow's own gate | Arize-ai/openinference |
+| 3 | `toJSON(needs)`, every upstream read with no `result` token anywhere | astral-sh/ruff |
+| 4 | PLACEMENT: a reusable-workflow call has `uses:` and no `steps:`, passing the result through JOB-level `with:` | scikit-learn |
+| 5 | a gate that NAMES each upstream, `needs.a.result`, `needs.b.result`, one per job | open-gsd, omi, inbox-zero |
+
+1 and 2 shipped in 0.1.0. 3 and 4 were found by pointing the fixed version at two more
+repositories. 5 was found by hand-labelling 40 of its own surviving findings, which is the
+only method here that found anything the previous method could not.
+
+**D4 no longer produces a HIGH finding.** That sample scored D4 at **0 defensible out of
+18**, and the overall false-positive rate among survivors was 40% (Wilson 95% [26%, 55%]),
+statistically indistinguishable from the 40% removed in 0.1.2. D4's HIGH came from whether
+the job's NAME matched test/lint/check, while the finding asserted something about branch
+protection that a workflow file cannot know. It is now MEDIUM when nothing in the workflow
+gates at all, LOW when something does, and HIGH only when protection data confirms the job
+is a required check.
+
+Corpus HIGH across 275 repositories and 4543 files: **658 to 354**.
+
 ## 0.1.2 closes four false-positive classes, two of them shipped
 
 **Upgrade from 0.1.0 or 0.1.1.** Four times this tool reported correct CI as broken, each time
@@ -170,5 +198,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 165 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 173 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.

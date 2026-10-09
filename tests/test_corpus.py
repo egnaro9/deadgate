@@ -107,9 +107,25 @@ jobs:
 """
 
 
-def test_d4_pr_verification_job_is_high():
+def test_d4_pr_verification_job_caps_at_medium_without_protection_data():
+    """D4 no longer reaches HIGH from the job's NAME.
+
+    This test asserted HIGH, inherited from `_gate_severity`, which returns HIGH when the
+    name matches test/lint/check and the workflow runs on pull_request. The finding it
+    labelled claims "any branch protection requiring it passes with nothing tested", and
+    whether the job is required is the one thing a workflow file cannot say.
+
+    Changed on evidence, not taste: in a pre-registered hand-labelled sample of 40 of this
+    tool's own surviving HIGH findings, D4 scored 0 defensible out of 18, and every arguable
+    case failed on exactly that point. HIGH is now reserved for the escalation path, where
+    branch protection has attributed the job to a confirmed required check.
+
+    MEDIUM here because this fixture's workflow has no fan-in gate at all, so nothing
+    anywhere would notice the skip.
+    """
     f = [x for x in _scan(_yaml.safe_load(_PR_TEST)) if x.detector == "D4"]
-    assert f and f[0].severity == "HIGH", f
+    assert f and f[0].severity == "MEDIUM", f
+    assert "cannot say" in f[0].repro, "the repro must state the condition, not assert it"
 
 
 def test_d4_release_publish_job_is_low():

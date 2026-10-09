@@ -355,3 +355,157 @@ def test_a_gate_that_forwards_the_whole_context_to_a_reusable_workflow_covers_it
     assert d4_outputs_gate_without_result_check(jobs_of(src)) == []
     nogate = src.replace("results: ${{ toJSON(needs) }}", "results: none")
     assert [f.detector for f in d4_outputs_gate_without_result_check(jobs_of(nogate))] == ["D4"]
+
+
+# ---------------------------------------------------------------------------
+# the fifth class: a gate that spells its needs out longhand
+# ---------------------------------------------------------------------------
+#
+# A gate can ask about every upstream without the wildcard and without toJSON, by naming
+# each one: needs.a.result, needs.b.result, one expression per job. That is the same
+# coverage written longhand, and it was invisible. Found by hand-labelling a 40-finding
+# sample of 0.1.2's survivors: 6 of the 16 false positives were this, across scikit-learn,
+# open-gsd, BasedHardware/omi and elie222/inbox-zero.
+
+ENUMERATING_GATE = textwrap.dedent("""
+    jobs:
+      changes:
+        runs-on: ubuntu-latest
+        steps: [{run: "true"}]
+      preflight:
+        runs-on: ubuntu-latest
+        steps: [{run: "true"}]
+      test:
+        needs: [changes, preflight]
+        if: ${{ needs.changes.outputs.code == 'true' }}
+        runs-on: ubuntu-latest
+        steps: [{run: "pytest"}]
+      required-tests:
+        needs: [changes, preflight, test]
+        if: ${{ always() }}
+        runs-on: ubuntu-latest
+        steps:
+          - run: |
+              test "${{ needs.changes.result }}" = success
+              test "${{ needs.preflight.result }}" = success
+              test "${{ needs.test.result }}" = success
+    """)
+
+
+def test_a_gate_that_enumerates_its_needs_by_name_covers_them():
+    src = ENUMERATING_GATE
+    assert "needs.*.result" not in src and "toJSON" not in src, "fixture must use the longhand form"
+    assert d4_outputs_gate_without_result_check(jobs_of(src)) == []
+
+
+def test_the_coverage_is_per_name_and_not_all_or_nothing():
+    # The precision that stops this fix from becoming the same bug pointing the other way.
+    # Drop ONE name from the gate and the job gated on that upstream comes back, while the
+    # others stay suppressed. A gate naming eight of nine needs covers eight.
+    src = "\n".join(l for l in ENUMERATING_GATE.splitlines()
+                    if "needs.changes.result" not in l)
+    assert "needs.changes.result" not in src
+    found = d4_outputs_gate_without_result_check(jobs_of(src))
+    ups = sorted(f.detail.split("'")[3] for f in found)
+    assert ups == ["changes"], f"only the unnamed upstream should return, got {ups}"
+
+
+def test_naming_a_job_the_gate_does_not_need_covers_nothing():
+    # A result read for a job outside the gate's own needs says nothing about that job,
+    # because the gate does not wait for it. The intersection with `needs` is load-bearing.
+    src = ENUMERATING_GATE.replace("needs.changes.result", "needs.unrelated.result")
+    found = d4_outputs_gate_without_result_check(jobs_of(src))
+    assert [f.detail.split("'")[3] for f in found] == ["changes"]
+
+
+def test_a_gate_naming_a_job_outside_its_needs_does_not_cover_that_job():
+    # The `& direct` intersection, isolated. The gate names needs.changes.result but does
+    # NOT need `changes`, so it does not wait for it and cannot report on it. Without the
+    # intersection the mention alone would suppress the finding about `build`.
+    src = textwrap.dedent("""
+        jobs:
+          changes:
+            runs-on: ubuntu-latest
+            steps: [{run: "true"}]
+          other:
+            runs-on: ubuntu-latest
+            steps: [{run: "true"}]
+          build:
+            needs: [changes]
+            if: ${{ needs.changes.outputs.code == 'true' }}
+            runs-on: ubuntu-latest
+            steps: [{run: "make"}]
+          gate:
+            needs: [other]
+            if: ${{ always() }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo "${{ needs.changes.result }}"
+        """)
+    found = d4_outputs_gate_without_result_check(jobs_of(src))
+    assert [f.detail.split("'")[3] for f in found] == ["changes"], (
+        "a gate that does not need `changes` cannot cover it, however it is mentioned")
+
+
+def test_reading_an_upstreams_outputs_is_not_reading_its_result():
+    # The `.result` anchor, isolated. A gate that reads needs.changes.outputs.* consults a
+    # VALUE the job produced, which tells it nothing about whether the job failed: a failed
+    # job produces no outputs and the read is empty, which is the whole defect D4 describes.
+    src = ENUMERATING_GATE.replace("needs.changes.result", "needs.changes.outputs.code")
+    found = d4_outputs_gate_without_result_check(jobs_of(src))
+    assert [f.detail.split("'")[3] for f in found] == ["changes"]
+
+
+# ---------------------------------------------------------------------------
+# D4 severity: MEDIUM when nothing gates, LOW when something does
+# ---------------------------------------------------------------------------
+
+def _d4(src):
+    import deadgate.detectors as D
+    d = yaml.safe_load(src)
+    return [f for f in D.scan_workflow(d) if f.detector == "D4"]
+
+
+D4_NO_GATE = textwrap.dedent("""
+    on: [pull_request]
+    jobs:
+      changes:
+        runs-on: ubuntu-latest
+        steps: [{run: "true"}]
+      test:
+        needs: [changes]
+        if: ${{ needs.changes.outputs.code == 'true' }}
+        runs-on: ubuntu-latest
+        steps: [{run: "pytest"}]
+    """)
+
+
+def test_d4_is_medium_when_no_job_in_the_workflow_gates_at_all():
+    # The strongest D4 case: nothing anywhere consults an upstream result, so the skip is
+    # genuinely unobserved. 126 of the 196 D4 HIGH on the corpus were this shape.
+    f = _d4(D4_NO_GATE)
+    assert [x.severity for x in f] == ["MEDIUM"], f
+
+
+def test_d4_drops_to_low_when_the_workflow_gates_but_not_over_this_upstream():
+    # Weaker on purpose. 55% of real gates hand the decision to a script this tool cannot
+    # read, so "a gate exists but misses this one upstream" is the claim most likely wrong.
+    src = D4_NO_GATE + (
+        "  gate:\n"
+        "    needs: [test]\n"
+        "    if: ${{ always() }}\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        '      - run: test "${{ needs.test.result }}" = success\n')
+    assert "gate:" in yaml.safe_load(src)["jobs"] or "gate" in yaml.safe_load(src)["jobs"], \
+        "the gate must actually be nested under jobs:"
+    f = _d4(src)
+    assert [x.severity for x in f] == ["LOW"], f
+
+
+def test_d4_never_claims_branch_protection_as_fact():
+    # The repro used to assert "any branch protection requiring it passes with nothing
+    # tested". That is conditional on which checks are required, which a workflow cannot say.
+    for x in _d4(D4_NO_GATE):
+        assert "cannot say" in x.repro
+        assert "passes with nothing tested" not in x.repro

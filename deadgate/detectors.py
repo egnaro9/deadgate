@@ -101,6 +101,8 @@ _NEEDS_READ = re.compile(r"needs\.(?:\*|[A-Za-z0-9_\-]+)\.(?:result|outputs)")
 # Fixing the wildcard form in 0.1.1 and stopping there was the error; the lesson is that a
 # gate can consult its upstreams without naming any of them.
 _NEEDS_WHOLE_CONTEXT = re.compile(r"to_?json\s*\(\s*needs\s*\)", re.I)
+# Which upstreams does a gate name explicitly? `needs.<job>.result`, one per job.
+_NAMED_RESULT = re.compile(r"needs\.([A-Za-z0-9_\-]+)\.result")
 _NEEDS_WILDCARD_RESULT = re.compile(r"needs\.\*\.result")
 
 
@@ -410,10 +412,61 @@ def _jobs_covered_by_a_wildcard_gate(jobs: dict) -> set[str]:
     for name, job in jobs.items():
         if not isinstance(job, dict) or not _runs_like_a_gate(job.get("if")):
             continue
-        if not _reads_all_upstream_state(_job_blob(job)):
+        blob = _job_blob(job)
+        direct = set(_needs_of(job))
+        if _reads_all_upstream_state(blob):
+            # wildcard or whole-context: asks about every direct need at once
+            covered |= direct
             continue
-        covered |= set(_needs_of(job))
+        # A gate can also enumerate its needs BY NAME, one expression each. That is
+        # the same coverage spelled out longhand, and it was the fifth false-positive
+        # class: scikit-learn, open-gsd, BasedHardware/omi and elie222/inbox-zero all
+        # write gates this way, and 6 of the 16 false positives in a 40-finding
+        # hand-labelled sample came from failing to read it.
+        #
+        # Deliberately NOT all-or-nothing: a gate that names eight of its nine needs
+        # covers those eight and not the ninth. Treating it as total would re-create
+        # the bug in the other direction, suppressing a finding about the one upstream
+        # nobody checks.
+        named = set(_NAMED_RESULT.findall(blob)) & direct
+        covered |= named
     return covered
+
+
+def _workflow_has_any_gate(jobs: dict) -> bool:
+    """Does ANY job here consult upstream results at all?"""
+    return any(isinstance(j, dict) and _runs_like_a_gate(j.get("if"))
+               and _reads_any_upstream_state(_job_blob(j)) for j in jobs.values())
+
+
+def _d4_severity(name: str, job: dict, doc: dict, has_gate: bool) -> str:
+    """D4 severity, capped at MEDIUM because the HIGH claim is not checkable from here.
+
+    D4 used to inherit `_gate_severity`, which returns HIGH when the job's NAME matches
+    test/lint/check/verify/ci and the workflow runs on pull_request. That is a guess from a
+    word, and the finding it labels asserts something stronger: "any branch protection
+    requiring it passes with nothing tested". Whether the job is a required check is exactly
+    what a workflow file cannot say.
+
+    Measured before changing it: in a pre-registered hand-labelled sample of 40 of this
+    tool's own surviving HIGH findings, D4 scored 0 defensible out of 18. Every arguable case
+    failed on the same point, that a failed gating job is itself red on the pull request, so
+    the stated impact needs a protection configuration the detector cannot see.
+
+    So HIGH is reserved for the escalation path, where `protection.py` has attributed the job
+    to a confirmed required check. Without that:
+
+      MEDIUM  no job in the workflow consults upstream results at all, so nothing anywhere
+              would notice. 126 of the 196 D4 HIGH on the corpus were this.
+      LOW     the workflow DOES gate, just not over this upstream. Weaker on purpose: 55% of
+              real gates delegate the decision to a script the detector cannot read, so a
+              claim that an existing gate misses one upstream is the claim most likely to be
+              wrong.
+    """
+    base = _gate_severity(name, job, doc)
+    if base == "LOW":
+        return "LOW"
+    return "MEDIUM" if not has_gate else "LOW"
 
 
 def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) -> list[Finding]:
@@ -444,7 +497,7 @@ def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) ->
             # `needs.*.result` asks about EVERY upstream, so it checks all of them at once.
             # Expanding it is the difference between a correct gate and a reported one.
             checked |= ups
-        sev = _gate_severity(name, job, doc or {})
+        sev = _d4_severity(name, job, doc or {}, _workflow_has_any_gate(jobs))
         for up in sorted(ups - checked - _jobs_covered_by_a_wildcard_gate(jobs)):
             found.append(Finding(
                 detector="D4",
@@ -454,8 +507,10 @@ def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) ->
                 detail=(f"job '{name}' runs only when '{up}' outputs say so, and nothing checks "
                         f"needs.{up}.result. If '{up}' FAILS, its outputs are unset, the "
                         f"condition is false, '{name}' skips, and a skipped job reports Success."),
-                repro=(f"Make '{up}' exit 1. '{name}' does not run, reports Success, and any "
-                       f"branch protection requiring it passes with nothing tested."),
+                repro=(f"Make '{up}' exit 1. '{name}' does not run and reports Success. "
+                       f"Whether that lets a merge through depends on which checks are "
+                       f"REQUIRED, which this file cannot say: if '{up}' is itself required, "
+                       f"its own failure blocks the merge and this is noise."),
             ))
     return found
 

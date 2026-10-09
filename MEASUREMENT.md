@@ -30,9 +30,9 @@ repository shipped, so those numbers came from a script that is not the one here
 withdrawn rather than carried forward; see "The detectors were blind to the documented idiom".
 
 ```
-CURRENT  2917 findings  172/275 repos (63%)  {D4 1415, D3 1061, D1 414, D2 27}
-HIGH      658 findings  105/275 repos (38%)  {D4 304, D3 273, D2 27, D1 54}
-```
+CURRENT  2560 findings  172/275 repos (63%)  {D4: 1058, D3: 1061, D1: 414, D2: 27}
+HIGH      354 findings   88/275 repos (32%)  {D3: 273, D2: 27, D1: 54}
+severity  {LOW: 1686, HIGH: 354, MEDIUM: 520}
 
 The corpus is NOT comparable to the 207-repository one quoted previously: the pinned list holds
 278 repositories and the earlier run reached 207 of them, so population and commits both moved.
@@ -46,6 +46,42 @@ biased, not sampled. Measured consequence: of Arize-ai/openinference's four affe
 workflows, `go-CI.yaml` and `java-CI.yaml` are cached while `python-CI.yaml` and
 `typescript-CI.yaml` are dropped, because "p" and "t" sort after "g" and "j". Every finding
 count here is a floor for repositories with many workflows, and CI files tend to sort late.
+
+## 0.1.3: a sixth class, and D4 stops claiming HIGH
+
+**The fifth false-positive class.** A gate can consult every upstream by NAMING each one,
+`needs.a.result`, `needs.b.result`, one expression per job. That is the wildcard written
+longhand and it was invisible, so the jobs those gates cover were still reported. Found by
+hand-labelling a sample of this tool's own survivors: 6 of 16 false positives were this,
+across scikit-learn, open-gsd, BasedHardware/omi and elie222/inbox-zero. Coverage is now
+per-name and NOT all-or-nothing: a gate naming eight of its nine needs covers eight.
+
+**D4 no longer reaches HIGH.** It used to inherit a severity decided by whether the job's
+NAME matched test/lint/check/verify/ci. The finding it labelled asserts "any branch
+protection requiring it passes with nothing tested", and whether a job is required is the
+one thing a workflow file cannot say.
+
+This was measured, not argued. A pre-registered, hand-labelled sample of 40 of 0.1.2's
+surviving HIGH findings (n=40, stratified by repo, cap 2 per repo, seed 20261009, labels
+fixed before drawing) scored:
+
+| detector | n | defensible | false | arguable |
+|---|---|---|---|---|
+| D3 | 17 | 7 | 8 | 2 |
+| D4 | 18 | **0** | 8 | 10 |
+| D2 | 4 | 0 | 0 | 4 |
+| D1 | 1 | 1 | 0 | 0 |
+
+Overall false-positive rate 40%, Wilson 95% [26%, 55%], which is indistinguishable from the
+40% removed in 0.1.2. Every arguable D4 failed on the same point: a failed gating job is
+itself red on the pull request, so the stated impact needs a configuration the detector
+cannot see.
+
+D4 severity now: HIGH only via the protection escalation path; MEDIUM when NO job in the
+workflow consults upstream results at all, which was 126 of the 196; LOW when the workflow
+does gate but not over this upstream, weaker on purpose because 55% of real gates hand the
+decision to a script this tool cannot read. The `repro` text no longer asserts the branch
+protection claim, it states the condition and says the file cannot settle it.
 
 ## The detectors were blind to the documented idiom
 
