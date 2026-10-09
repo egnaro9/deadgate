@@ -207,7 +207,7 @@ def d2_fanin_without_result_check(jobs: dict,
             if verdict is True:
                 continue
             if verdict is None and scripts:
-                sev = "LOW"
+                sev = _demote(sev)
                 unverified = (" NOTE: this job shells out to a script with a token in"
                               " scope, so whether it checks upstream status could not be"
                               " verified from the workflow alone.")
@@ -262,6 +262,20 @@ _API_STATUS_READ = re.compile(
     r'|\bcheck-runs\b'                         # the checks API
     r'|\bcommits/[^\n"\'`]{0,160}?/status\b',  # combined status
     re.I)
+
+
+_ONE_STEP_DOWN = {"HIGH": "MEDIUM", "MEDIUM": "LOW", "LOW": "LOW"}
+
+
+def _demote(sev: str) -> str:
+    """One tier down, from wherever the finding actually sits.
+
+    The class-7 guard first wrote `"MEDIUM" if sev == "HIGH" else sev`, which became a
+    silent no-op the moment D1 stopped producing a structural HIGH: the guard still ran,
+    still appended its note, and changed nothing. Two tests caught it by asserting the
+    demoted severity was strictly below the baseline rather than equal to a literal.
+    """
+    return _ONE_STEP_DOWN.get(sev, sev)
 
 
 def _token_in_scope(job: dict, step: dict) -> bool:
@@ -338,6 +352,7 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
     found = []
     conditional = {n for n, j in jobs.items()
                    if isinstance(j, dict) and _skip_prone(j.get("if"))}
+    _chain_watched = _jobs_whose_whole_chain_a_gate_watches(jobs)
     # A dependent whose own if: reads the upstream's outputs is deliberately gated on it:
     # the change-detection pattern, which is intentional, and whose real failure mode is
     # D4's. That exclusion happens in _steps_text, which reads the job-level if:. An
@@ -352,6 +367,8 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
         # A dependent that can never run cannot falsely report success.
         if _never_runs(job.get("if")):
             continue
+        if name in _chain_watched:
+            continue
         needs_list = needs if isinstance(needs, list) else [needs]
         skippable = [n for n in needs_list if n in conditional]
         if not skippable:
@@ -359,7 +376,7 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
         text = _job_blob(job)
         if _reads_any_upstream_state(text):
             continue
-        sev = _gate_severity(name, job, doc or {})
+        sev = _d1_severity(name, job, doc or {}, _workflow_has_any_gate(jobs))
         # Class 7: the job may consult the API instead of `needs`, in a script this
         # tool cannot parse. Only considered when the job announces itself as a gate,
         # so an ordinary job running ./build.sh is untouched.
@@ -369,7 +386,7 @@ def d1_skippable_upstream(jobs: dict, doc: dict | None = None,
             if verdict is True:
                 continue
             if verdict is None and _delegated_status_scripts(job):
-                sev = "MEDIUM" if sev == "HIGH" else sev
+                sev = _demote(sev)
                 unverified = (" NOTE: this job shells out to a script with a token in"
                               " scope, so whether it checks upstream status could not be"
                               " verified from the workflow alone.")
@@ -602,7 +619,11 @@ def _needs_of(job) -> list[str]:
     return list(n) if isinstance(n, list) else [str(n)]
 
 
-_ALWAYS_CONJUNCT = re.compile(r"\balways\s*\(\s*\)")
+# `!cancelled()` runs on failure just as `always()` does, so a gate conditioned on it
+# still sees an upstream's own `failure` result. spiceai/spiceai's e2e-gate is written
+# that way, and excluding it left a finding standing whose whole chain that gate
+# watches. Only `cancelled()` behaves differently, and a cancelled run is not a merge.
+_ALWAYS_CONJUNCT = re.compile(r"\balways\s*\(\s*\)|!\s*cancelled\s*\(\s*\)")
 
 
 def _runs_like_a_gate(cond) -> bool:
@@ -624,6 +645,52 @@ def _runs_like_a_gate(cond) -> bool:
     cover pull requests, which this does not model; that is a known limit, not an oversight.
     """
     return cond is not None and bool(_ALWAYS_CONJUNCT.search(str(cond)))
+
+
+def _upstream_chain(jobs: dict, job: str) -> set[str]:
+    """Every job the skip of `job` could transitively originate from."""
+    seen, stack = set(), [job]
+    while stack:
+        for up in _needs_of(jobs.get(stack.pop(), {})):
+            if up not in seen:
+                seen.add(up)
+                stack.append(up)
+    return seen
+
+
+def _jobs_whose_whole_chain_a_gate_watches(jobs: dict) -> set[str]:
+    """Jobs for which a fan-in gate can see every failure that could skip them.
+
+    D1's premise is that an upstream skips, the dependent silently skips with it, and a
+    skipped job reports Success. That premise needs the SKIP to be invisible. A gate that
+    needs the dependent AND every job in its upstream chain sees any real failure in that
+    chain directly, by that job's own `failure` result, so the only skip that still gets
+    through is a condition deliberately evaluating false, which is the author's intent and
+    not a defect.
+
+    Note which direction the transitivity runs, because the opposite form was WRONG and a
+    surviving mutant proved it: suppressing a job because its PARENT is covered is unsound,
+    since `needs.*.result` reports only direct needs and a failed grandparent makes the
+    parent skip rather than fail. This requires the gate to need the whole chain ITSELF,
+    which is strictly stricter than reading one level.
+
+    Verified against three findings hand-labelled false for exactly this reason
+    (sgl-project/sglang pr-test-mlx x2, spiceai/spiceai test-bigquery): in each one the
+    gate's `needs` contains the entire chain, so nothing in it can fail unseen. Gates that
+    allow a `skipped` result do not weaken this, and nearly all of them do allow it: a
+    path-filtered workflow would otherwise always fail.
+    """
+    gates = [(n, set(_needs_of(j))) for n, j in jobs.items()
+             if isinstance(j, dict) and _runs_like_a_gate(j.get("if"))
+             and _reads_any_upstream_state(_job_blob(j))]
+    if not gates:
+        return set()
+    covered = set()
+    for name in jobs:
+        want = _upstream_chain(jobs, name) | {name}
+        if any(want <= (watched | {gate}) for gate, watched in gates):
+            covered.add(name)
+    return covered
 
 
 def _jobs_covered_by_a_wildcard_gate(jobs: dict) -> set[str]:
@@ -668,6 +735,30 @@ def _workflow_has_any_gate(jobs: dict) -> bool:
     """Does ANY job here consult upstream results at all?"""
     return any(isinstance(j, dict) and _runs_like_a_gate(j.get("if"))
                and _reads_any_upstream_state(_job_blob(j)) for j in jobs.values())
+
+
+def _d1_severity(name: str, job: dict, doc: dict, has_gate: bool) -> str:
+    """D1 severity, capped at MEDIUM for the same reason D4 is.
+
+    D1's finding asserts that a required check is satisfied by a skipped job. Whether the
+    job is a required check is precisely what a workflow file cannot say, so a structural
+    HIGH was a guess from a word in the job's name.
+
+    Measured before changing it, by hand-labelling the ENTIRE D1 stratum rather than
+    sampling it (54 findings, 29 jobs, so a census was cheaper than an argument about two
+    disagreeing samples): 65% false per finding even after the API-gate and never-runs
+    fixes. Eleven of the survivors are a single reporting job. That is not a tier that can
+    keep claiming HIGH on its own authority.
+
+    HIGH is therefore reserved for the escalation path in `protection.py`, where the job has
+    been attributed to a confirmed required check. Without that, MEDIUM when nothing in the
+    workflow consults upstream results at all, and LOW when the workflow does gate but not
+    over this upstream.
+    """
+    base = _gate_severity(name, job, doc)
+    if base == "LOW":
+        return "LOW"
+    return "MEDIUM" if not has_gate else "LOW"
 
 
 def _d4_severity(name: str, job: dict, doc: dict, has_gate: bool) -> str:

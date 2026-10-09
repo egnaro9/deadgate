@@ -274,3 +274,88 @@ def test_the_same_job_enabled_still_produces_one():
     """Without this the test above could pass because the fixture is broken."""
     jobs = yaml.safe_load(DISABLED % "${{ !cancelled() }}")["jobs"]
     assert len(d1_skippable_upstream(jobs, {}, None)) == 1
+
+
+# ---------------------------------------------------------------------------
+# A gate covers a job only if it watches that job's WHOLE upstream chain.
+#
+# D1's premise needs the skip to be invisible. A gate that needs the dependent and every
+# job upstream of it sees any real failure in that chain by that job's own `failure`
+# result, so the only skip still getting through is a condition the author deliberately
+# evaluated false. Three findings were hand-labelled false for exactly this
+# (sgl-project/sglang pr-test-mlx x2, spiceai/spiceai test-bigquery), and the corpus run
+# confirms the rule removes those and nothing else.
+#
+# Note the direction of the transitivity. Suppressing a job because its PARENT is covered
+# is UNSOUND and a surviving mutant proved it earlier: `needs.*.result` reports only direct
+# needs, and a failed grandparent makes the parent SKIP rather than fail. This rule
+# requires the gate to need the whole chain itself, which is strictly stricter.
+#
+# Gates allowing a `skipped` result do not weaken this, and nearly all of them do allow it
+# (sglang checks only failure/cancelled; spiceai allow-lists success and skipped). A
+# path-filtered workflow would otherwise always fail.
+
+CHAIN = textwrap.dedent("""
+    on: pull_request
+    jobs:
+      detect:
+        runs-on: ubuntu-latest
+        steps: [{run: echo changed=true}]
+      gate-upstream:
+        needs: [detect]
+        if: ${{ needs.detect.outputs.changed == 'true' }}
+        runs-on: ubuntu-latest
+        steps: [{run: echo gating}]
+      e2e:
+        needs: [gate-upstream]
+        runs-on: ubuntu-latest
+        steps: [{run: pytest}]
+      finish:
+        needs: %s
+        if: %s
+        runs-on: ubuntu-latest
+        steps:
+          - run: |
+              json_needs='${{ toJson(needs) }}'
+              echo "$json_needs" | jq -r 'to_entries[] | select(.value.result == "failure")'
+    """)
+
+
+def _d1_on(needs, cond="always()"):
+    jobs = yaml.safe_load(CHAIN % (needs, cond))["jobs"]
+    return [f for f in d1_skippable_upstream(jobs, {}, None) if f.job == "e2e"]
+
+
+def test_a_gate_watching_the_whole_chain_suppresses_the_finding():
+    """The sglang shape: finish needs e2e AND gate-upstream AND detect."""
+    assert _d1_on("[detect, gate-upstream, e2e]") == []
+
+
+def test_a_gate_watching_only_the_job_does_not_suppress_it():
+    """The chain requirement. If the gate cannot see gate-upstream, a failure there
+    skips e2e invisibly and the finding stands."""
+    assert _d1_on("[e2e]"), "a gate blind to the upstream must not suppress"
+
+
+def test_the_chain_requirement_is_transitive():
+    """Watching the direct parent is not enough: `detect` is two hops up, and a failure
+    there skips gate-upstream, which skips e2e."""
+    assert _d1_on("[gate-upstream, e2e]"), "missing the grandparent must not suppress"
+
+
+def test_not_cancelled_counts_as_a_gate_condition():
+    """spiceai's e2e-gate is `!cancelled() && ...`, which runs on failure exactly as
+    always() does, so it sees an upstream's failure result."""
+    assert _d1_on("[detect, gate-upstream, e2e]",
+                  "${{ !cancelled() && github.event_name != 'pull_request' }}") == []
+
+
+def test_cancelled_alone_is_not_a_gate_condition():
+    """The negative direction, so the predicate cannot be widened to anything."""
+    assert _d1_on("[detect, gate-upstream, e2e]", "${{ cancelled() }}")
+
+
+def test_a_gate_that_reads_no_results_does_not_cover():
+    jobs = yaml.safe_load(CHAIN % ("[detect, gate-upstream, e2e]", "always()"))["jobs"]
+    jobs["finish"]["steps"] = [{"run": "echo done"}]
+    assert [f for f in d1_skippable_upstream(jobs, {}, None) if f.job == "e2e"]

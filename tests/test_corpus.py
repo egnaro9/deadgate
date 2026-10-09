@@ -197,9 +197,19 @@ def _of(doc_text, det):
     return [x for x in _scan(_yaml.safe_load(doc_text)) if x.detector == det]
 
 
-def test_d1_pr_verification_is_high():
+def test_d1_pr_verification_is_medium_not_high():
+    """D1's structural ceiling is MEDIUM as of the census, not HIGH.
+
+    This asserted HIGH until the whole D1 stratium was hand-labelled: 65% false per
+    finding even after the API-gate and never-runs fixes, with 11 of the survivors a
+    single reporting job. "A required check is satisfied by a skipped job" needs a
+    protection configuration no workflow file carries, so HIGH now belongs only to the
+    escalation path in protection.py. Still MEDIUM rather than LOW, so the ship-job
+    branch below stays distinguishable and neither can be deleted silently.
+    """
     f = _of(_D1_PR_TEST, "D1")
-    assert f and f[0].severity == "HIGH", f
+    assert f and f[0].severity == "MEDIUM", f
+    assert f[0].severity != "HIGH"
 
 
 def test_d1_release_pipeline_is_low():
@@ -277,8 +287,12 @@ jobs:
         f"a release job is not a merge gate even on a PR: got {[f.severity for f in hits]}")
 
 
-def test_a_check_job_on_a_pull_request_is_HIGH():
-    """The other side of the same guard, so neither branch can be deleted silently."""
+def test_a_check_job_on_a_pull_request_is_MEDIUM():
+    """The other side of the same guard, so neither branch can be deleted silently.
+
+    Was HIGH; capped at MEDIUM when the D1 census measured 65% false. A ship job stays
+    LOW, so the two branches remain distinct and the guard is still load-bearing.
+    """
     doc = yaml.safe_load("""
 on: [pull_request]
 jobs:
@@ -294,8 +308,9 @@ jobs:
       - run: pytest
 """)
     hits = [f for f in _findings(doc) if f.detector == "D1" and f.job == "verify-tests"]
-    assert hits and all(f.severity == "HIGH" for f in hits), (
-        f"a PR verification job that can silently not run is HIGH: got {[f.severity for f in hits]}")
+    assert hits and all(f.severity == "MEDIUM" for f in hits), (
+        "a PR verification job that can silently not run is MEDIUM, capped by the census: "
+        f"got {[f.severity for f in hits]}")
 
 
 def test_d3_outside_a_pull_request_is_LOW():

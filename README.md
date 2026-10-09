@@ -133,6 +133,89 @@ is a separate and harder problem and is not in this release.
 ## Licence
 MIT
 
+## 0.1.4 closes two more classes, and D1 stops claiming HIGH
+
+**Upgrade from anything earlier.** Seven times now this tool has reported correct CI as
+broken. The first six were all the same mistake, asking "does this job consult its
+upstreams?" and looking in too few places, each fixed by widening a pattern. The seventh
+is not that, and could not be fixed that way.
+
+| # | what was missed | found on |
+|---|---|---|
+| 6 | D2 fired on `always() + needs + no result read`, the signature of every reporting job | pre-registered sample |
+| 7 | upstream status read through the **GitHub Actions API**, not `needs` | WordPress/gutenberg |
+
+### Class 7, and why a wider regex cannot fix it
+
+gutenberg's `*-status-check` jobs run a script that pages
+`GET /repos/{repo}/actions/runs/{run_id}/jobs` and fails if any job concluded as anything
+other than `success` or `skipped`. The word `result` never appears and `needs` is never
+consulted, so **no pattern over the workflow file can find it**: the evidence lives in a
+file this tool does not parse. That gate is in fact *more* robust than the idiom deadgate
+hunts for, because it also fails closed when a job was never evaluated, which
+`needs.*.result` cannot detect. Ten of the 54 D1 findings were this shape, all false, all
+one repository.
+
+So the claim is narrowed instead of the pattern widened. When a named gate shells out with
+a token in scope, deadgate reads the script: it **suppresses** if the script consults run
+status, keeps full severity if it demonstrably does not, and otherwise **demotes and says
+the claim is unverified** rather than asserting something it cannot check. The token
+requirement is what keeps this narrow, since reading another job's conclusion needs
+credentials; without it every job running `./build.sh` would be demoted.
+
+### Two smaller classes
+
+- **A job that can never run.** Four findings were jobs whose own `if:` is a literal
+  false. A job that never executes cannot report success on anything.
+- **A gate that watches the whole chain.** A gate needing a job *and every job upstream of
+  it* sees any real failure in that chain directly, so the only skip still getting through
+  is a condition the author deliberately evaluated false. Note the direction: suppressing a
+  job because its *parent* is covered is unsound, because `needs.*.result` reports only
+  direct needs and a failed grandparent makes the parent skip rather than fail.
+
+### D1 no longer produces a HIGH finding
+
+D1's population was small enough to **census rather than sample**, so it was: every one of
+the 54 findings hand-labelled, 29 distinct jobs. **76% false per finding, 59% per job**,
+exact, no interval. Even after all three fixes above it is 65% false, with eleven of the
+survivors a single reporting job.
+
+"A required check is satisfied by a skipped job" needs a protection configuration no
+workflow file carries. So D1 follows D4 and D2: MEDIUM when nothing in the workflow
+consults upstream results at all, LOW when something does, and HIGH only when
+`protection.py` confirms the job is a required check.
+
+Corpus HIGH across 275 repositories and 4543 files: **354 to 125**, now entirely D3,
+measured at 21-33% false per finding.
+
+### The measurement defect, which is the part worth reading
+
+Every precision figure published for this tool before 0.1.4, including the 40% in the
+write-up, was **answering a different question than the one it was reported as answering.**
+
+The samples were stratified with a cap of two findings per repository, to stop one
+repository dominating. But deadgate emits one finding per (job, upstream) pair, and the
+false positives concentrate in jobs with many dependencies: one reporting job in the
+corpus emits eleven findings by itself. The cap deletes exactly that clustering.
+
+Simulated against the censused truth, 20k draws at n=15:
+
+| sampler | converges to | bias vs per-finding | bias vs per-job |
+|---|---|---|---|
+| cap 1/repo | 58.3% | -17.6 pts | -0.3 pts |
+| cap 2/repo | 60.1% | -15.8 pts | +1.5 pts |
+| cap 3/repo | 63.6% | -12.3 pts | +5.0 pts |
+| uncapped | 74.7% | -1.2 pts | +16.1 pts |
+
+The capped sampler is an unbiased estimator of the **per-job** rate and runs about 16
+points low for the **per-finding** rate. Every published number was weighted back to
+per-finding populations, so every one understated in the same direction. Two n=15 samples
+of D1 estimated 60% and 33%; the truth is 76%, and the second sample's 95% interval did
+not contain it.
+
+Related, and also worth stating plainly: **179 findings were 136 distinct problems**, a
+1.32x inflation. A finding count is not a problem count.
+
 ## 0.1.3 closes a fifth class, and D4 stops claiming HIGH
 
 **Upgrade from anything earlier.** Five times now this tool has reported correct CI as
@@ -198,5 +281,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 173 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 219 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.
