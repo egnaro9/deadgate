@@ -142,6 +142,53 @@ is a separate and harder problem and is not in this release.
 ## Licence
 MIT
 
+## 0.1.8 fixes two bugs the census found in D3 itself
+
+Both were found by hand-labelling D3's HIGH findings, not by a test.
+
+### The wrong pipeline was being reported
+
+A line can hold more than one pipeline at different nesting depths, and they are not
+equally guilty:
+
+```bash
+echo "batch=$(grep -Po '...' list.txt | python3 -c '...')" | tee "$GITHUB_OUTPUT"
+```
+
+The outer pipeline is `echo ... | tee`, whose head cannot fail. The inner one is
+`grep | python3`, whose head can. D3 split the whole line on its **last** pipe, so it only
+ever saw the outer one, and `_upstream_can_fail` then waved it through on the grounds that
+"the outer head holds a substitution we already judged benign" -- which it had not, because
+that loop returns False only for *benign* substitutions and falls through for every other
+kind. Any head containing any substitution was assumed able to fail.
+
+Each pipeline is now judged against its own head, innermost first. That removes the four
+head-cannot-fail false positives in the census and, where a finding survives, names the
+pipeline that is actually masking something: `sha256sum f | cut -d' ' -f1` rather than the
+`echo ... >> "$GITHUB_OUTPUT"` wrapped around it.
+
+### The `break` was not the second bug
+
+One finding per step was blamed for hiding a real inner pipeline behind a benign outer
+one. That was the first bug choosing the outer. With candidates ordered innermost-first,
+the first qualifying pipeline is the guilty one and stopping there loses nothing.
+
+Removing it anyway was tried and measured: **D3 HIGH went 94 to 125**, about 31 additional
+pipelines inside steps that already reported one, none of them in the hand-labelled census.
+Shipping a 33% increase in the loudest tier at unknown precision is the move this whole
+series exists to avoid, so the break stays.
+
+| | before | after |
+|---|---|---|
+| D3 HIGH | 94 | **95** |
+| head-cannot-fail false positives | 4 | **0** |
+| false among findings matchable to a census label | 35.1% | **30.1%** |
+
+22 of the 95 no longer match a census label, because the finding now points at a different
+line in the same job: the inner pipeline instead of its wrapper. Those are the same defects
+reported more precisely, not new ones, but they are **not** independently labelled and the
+overall rate is not re-established by this release.
+
 ## 0.1.7 narrows D3, on a complete census of its HIGH findings
 
 **All 125 D3 HIGH findings were hand-labelled. 51.2% were false.** The pre-registered rule
@@ -433,5 +480,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 199 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 206 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.

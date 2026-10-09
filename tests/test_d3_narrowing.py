@@ -122,3 +122,71 @@ def test_predicate_rejects_a_line_that_consumes_nothing():
 
 def test_predicate_accepts_a_redirect():
     assert _masked_status_can_matter("cmd | jq . > out.json", "cmd | jq . > out.json")
+
+
+# ---------------------------------------------------------------------------
+# Two bugs found while censusing D3's HIGH stratum.
+#
+# BUG 1: the whole line was split on its LAST pipe, so only the outermost pipeline was
+# ever judged. In
+#     echo "batch=$(grep -Po '...' list.txt | python3 -c '...')" | tee "$GITHUB_OUTPUT"
+# that is `echo ... | tee`, whose head cannot fail. `_upstream_can_fail` then returned
+# True anyway on the grounds that "the outer head holds a substitution we already judged
+# benign above" -- which it had not: that loop returns False only for benign
+# substitutions and falls through for every other kind. Four of the 125 census findings
+# were this, all false.
+#
+# BUG 2: `break` after the first finding per step. Blamed for hiding a real inner
+# pipeline behind a benign outer one, but that was bug 1 choosing the outer. With
+# candidates ordered innermost-first and each judged against its own head, the first
+# qualifying pipeline is the guilty one. Removing the break as well was tried and
+# measured: it added roughly 31 unlabelled findings to the loudest tier, so it was put
+# back.
+
+from deadgate.detectors import _pipeline_candidates, _segment_head_can_fail, _strip_substitutions
+
+
+def test_candidates_include_the_pipeline_inside_a_substitution():
+    line = 'echo "batch=$(grep -Po \'x\' list.txt | python3 -c \'y\')" | tee "$GITHUB_OUTPUT"'
+    segs = [s for s, _ in _pipeline_candidates(line)]
+    assert any("grep" in s and "python3" in s for s in segs), segs
+    assert any("tee" in s and "grep" not in s for s in segs), "the outer pipeline too"
+
+
+def test_the_inner_candidate_comes_first():
+    """Order matters, because one finding is reported per step. Innermost first means the
+    guilty pipeline is the one reported."""
+    line = 'x="$(sha256sum f | cut -d\' \' -f1)" | tee log'
+    segs = [s for s, _ in _pipeline_candidates(line)]
+    assert "sha256sum" in segs[0], segs
+
+
+def test_strip_substitutions_leaves_the_outer_command():
+    assert _strip_substitutions('echo "a=$(cmd | filt)" | tee f').strip() == 'echo "a=" | tee f'
+
+
+def test_an_echo_head_holding_only_benign_substitutions_cannot_fail():
+    """OSGeo/grass. `uname` cannot meaningfully fail and neither can echo, so the awk
+    pipeline masks nothing. The old guard refused to call any head benign once it held a
+    substitution, which is what reported this."""
+    assert not _segment_head_can_fail('echo "$(uname -s)"-"$(uname -m)" | awk \'{print tolower($0)}\'')
+
+
+def test_an_echo_head_holding_a_FAILING_substitution_can_fail():
+    """The other direction, so the fix cannot become a blanket mute."""
+    assert _segment_head_can_fail('echo "$(curl -s https://x | jq -r .v)" | tee f')
+
+
+def test_the_four_census_false_positives_are_gone():
+    """Each of these was a D3 HIGH in the census and each was hand-labelled false."""
+    for line in (
+        'arch="$(echo "$(uname -s)"-"$(uname -m)" | awk \'{print tolower($0)}\')"',
+        "printf 'New java files: %s' \"$new_java\" | tee \"$GITHUB_STEP_SUMMARY\"",
+    ):
+        assert not _high(line + "\nexit 1"), line
+
+
+def test_a_step_still_reports_only_one_finding():
+    """The break stays. Two masked pipelines in one step report once, not twice."""
+    run = 'a=$(curl -s u1 | jq -r .x)\nb=$(curl -s u2 | jq -r .y)\necho "$a$b" >> "$GITHUB_OUTPUT"'
+    assert len(_high(run)) == 1

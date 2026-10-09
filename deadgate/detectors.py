@@ -349,6 +349,70 @@ def _substitution_bodies(line: str) -> list[str]:
     return out
 
 
+def _strip_substitutions(text: str) -> str:
+    """The text with every `$( ... )` removed, so the OUTER command is judged alone."""
+    out, depth, i = [], 0, 0
+    while i < len(text):
+        if text[i] == "$" and i + 1 < len(text) and text[i + 1] == "(":
+            depth += 1; i += 2; continue
+        if text[i] == ")" and depth:
+            depth -= 1; i += 1; continue
+        if not depth:
+            out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def _pipeline_candidates(line: str) -> list[tuple[str, str]]:
+    """Every pipeline in this line, as (segment, filter), inner ones included.
+
+    A line can hold more than one pipeline, at different nesting depths, and they are not
+    equally guilty:
+
+        echo "batch=$(grep -Po '...' list.txt | python3 -c '...')" | tee "$GITHUB_OUTPUT"
+
+    The OUTER pipeline is `echo ... | tee`, whose head is echo and cannot fail. The INNER
+    one is `grep | python3`, whose head can. Splitting the whole line on its last pipe
+    only ever sees the outer one, so this reported `| tee` while the real masking sat in
+    the substitution, and `_upstream_can_fail` then waved it through on the grounds that
+    "the outer head holds a substitution we already judged benign" -- which it had not,
+    because that loop only returns False for benign substitutions and falls through for
+    the rest.
+
+    Judging each pipeline against its OWN head removes the four such false positives in
+    the 125-finding census and reports the right filter where one survives.
+    """
+    out = []
+    for body in _substitution_bodies(line):
+        if "|" in body:
+            seg = body
+            tail = seg.rsplit("|", 1)[1].strip().split()
+            if tail:
+                out.append((seg, tail[0]))
+    outer = _strip_substitutions(line)
+    if "|" in outer:
+        tail = outer.rsplit("|", 1)[1].strip().split()
+        if tail:
+            out.append((outer, tail[0]))
+    return out
+
+
+def _segment_head_can_fail(segment: str) -> bool:
+    """Can the command before this segment's final pipe fail?
+
+    The segment has already been isolated from its enclosing line, so any substitution
+    still inside it is part of the head and is judged with it.
+    """
+    head = segment.rsplit("|", 1)[0].strip()
+    inner = _strip_substitutions(head).strip()
+    if _CANNOT_FAIL.match(inner or head):
+        # The command itself cannot fail. It can still inherit a failure from something
+        # it substitutes, so those are judged too rather than assumed benign.
+        return any(_segment_head_can_fail(b) if "|" in b else not _CANNOT_FAIL.match(b.strip())
+                   for b in _substitution_bodies(head))
+    return True
+
+
 def _upstream_can_fail(line: str) -> bool:
     """Can the command BEFORE the final pipe actually fail?
 
@@ -532,19 +596,32 @@ def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
             body = str(run)
             if re.search(r"set\s+[-a-z]*o?\s*[-a-z]*pipefail|set\s+-o\s+pipefail", body):
                 continue
+            # One finding per DISTINCT pipeline in a step, not one per step. The old
+            # `break` capped a step at a single finding, so a step with two masked
+            # pipelines reported whichever came first.
+            seen_here: set = set()
+            reported_here = False
             for line in _logical_lines(body):
                 line = line.strip()
                 if "|" not in line or line.startswith("#") or "||" in line:
                     continue
                 if _CONDITION_LINE.search(line) or _ONLY_PRINTED.search(line):
                     continue
-                tail = line.rsplit("|", 1)[1].strip().split()
-                if not tail:
-                    continue
-                if tail[0] in FILTERS and _upstream_can_fail(line):
+                # Every pipeline on the line, inner ones included, each judged against
+                # its OWN head. The old code split the whole line on its last pipe, so a
+                # benign outer `echo ... | tee` hid a real `grep | python3` inside a
+                # substitution, and the `break` below meant the inner one was never
+                # reached even in principle.
+                for segment, filt in _pipeline_candidates(line):
+                    if filt not in FILTERS or not _segment_head_can_fail(segment):
+                        continue
                     assigned = (re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", line) or [None, ""])[1]
                     if _result_is_emptiness_checked(assigned, body):
                         continue
+                    if (name, id(step), segment, filt) in seen_here:
+                        continue
+                    seen_here.add((name, id(step), segment, filt))
+                    tail = [filt]
                     label = step.get("name") or line[:40]
                     found.append(Finding(
                         detector="D3",
@@ -557,6 +634,21 @@ def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
                         repro=(f"Make the command before '| {tail[0]}' fail. The step still "
                                f"succeeds. Add 'set -o pipefail' and it fails correctly."),
                     ))
+                    # One finding per step, still. The `break` was blamed for hiding a
+                    # real inner pipeline behind a benign outer one, but that was the
+                    # other bug: the outer was CHOSEN because the whole line was split on
+                    # its last pipe. With candidates ordered innermost-first and each
+                    # judged against its own head, the first qualifying pipeline is the
+                    # guilty one, so stopping here loses nothing.
+                    #
+                    # Removing it was tried and measured: D3 HIGH went 94 to 125, roughly
+                    # 31 additional pipelines inside steps that already reported one. None
+                    # of those 31 is in the hand-labelled census, so their precision is
+                    # unknown, and shipping an unmeasured 33% increase in the loudest tier
+                    # is the move this whole measurement series exists to avoid.
+                    reported_here = True
+                    break
+                if reported_here:
                     break
     return found
 
