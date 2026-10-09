@@ -119,14 +119,6 @@ _NEEDS_READ = re.compile(r"needs\.(?:\*|[A-Za-z0-9_\-]+)\.(?:result|outputs)")
 # Fixing the wildcard form in 0.1.1 and stopping there was the error; the lesson is that a
 # gate can consult its upstreams without naming any of them.
 _NEEDS_WHOLE_CONTEXT = re.compile(r"to_?json\s*\(\s*needs\s*\)", re.I)
-# Which upstreams does a gate name explicitly? `needs.<job>.result`, one per job.
-_NAMED_RESULT = re.compile(r"needs\.([A-Za-z0-9_\-]+)\.result")
-_NEEDS_WILDCARD_RESULT = re.compile(r"needs\.\*\.result")
-
-
-def _reads_all_upstream_state(text: str) -> bool:
-    """True when the text consults EVERY upstream at once, by wildcard or by whole context."""
-    return bool(_NEEDS_WILDCARD_RESULT.search(text) or _NEEDS_WHOLE_CONTEXT.search(text))
 
 
 def _job_blob(job) -> str:
@@ -693,44 +685,6 @@ def _jobs_whose_whole_chain_a_gate_watches(jobs: dict) -> set[str]:
     return covered
 
 
-def _jobs_covered_by_a_wildcard_gate(jobs: dict) -> set[str]:
-    """Jobs whose FAILURE is already caught by a fan-in gate in the same workflow.
-
-    D4's premise is that a failed gating job skips its dependents and the skip reports
-    Success, so the merge is green with nothing tested. That premise needs the failure to
-    reach nobody. A job running on always() that reads `needs.*.result` sees the failure of
-    every job it needs, directly or transitively, so for those jobs the premise is false and
-    the finding is noise.
-
-    Measured on Arize-ai/openinference: five D4 findings, three of them HIGH, in four
-    workflows that each carry exactly such a gate. Reported in isolation they read as "the
-    merge is green with nothing tested", and the merge is not green.
-    """
-    covered: set[str] = set()
-    for name, job in jobs.items():
-        if not isinstance(job, dict) or not _runs_like_a_gate(job.get("if")):
-            continue
-        blob = _job_blob(job)
-        direct = set(_needs_of(job))
-        if _reads_all_upstream_state(blob):
-            # wildcard or whole-context: asks about every direct need at once
-            covered |= direct
-            continue
-        # A gate can also enumerate its needs BY NAME, one expression each. That is
-        # the same coverage spelled out longhand, and it was the fifth false-positive
-        # class: scikit-learn, open-gsd, BasedHardware/omi and elie222/inbox-zero all
-        # write gates this way, and 6 of the 16 false positives in a 40-finding
-        # hand-labelled sample came from failing to read it.
-        #
-        # Deliberately NOT all-or-nothing: a gate that names eight of its nine needs
-        # covers those eight and not the ninth. Treating it as total would re-create
-        # the bug in the other direction, suppressing a finding about the one upstream
-        # nobody checks.
-        named = set(_NAMED_RESULT.findall(blob)) & direct
-        covered |= named
-    return covered
-
-
 def _workflow_has_any_gate(jobs: dict) -> bool:
     """Does ANY job here consult upstream results at all?"""
     return any(isinstance(j, dict) and _runs_like_a_gate(j.get("if"))
@@ -761,84 +715,17 @@ def _d1_severity(name: str, job: dict, doc: dict, has_gate: bool) -> str:
     return "MEDIUM" if not has_gate else "LOW"
 
 
-def _d4_severity(name: str, job: dict, doc: dict, has_gate: bool) -> str:
-    """D4 severity, capped at MEDIUM because the HIGH claim is not checkable from here.
-
-    D4 used to inherit `_gate_severity`, which returns HIGH when the job's NAME matches
-    test/lint/check/verify/ci and the workflow runs on pull_request. That is a guess from a
-    word, and the finding it labels asserts something stronger: "any branch protection
-    requiring it passes with nothing tested". Whether the job is a required check is exactly
-    what a workflow file cannot say.
-
-    Measured before changing it: in a pre-registered hand-labelled sample of 40 of this
-    tool's own surviving HIGH findings, D4 scored 0 defensible out of 18. Every arguable case
-    failed on the same point, that a failed gating job is itself red on the pull request, so
-    the stated impact needs a protection configuration the detector cannot see.
-
-    So HIGH is reserved for the escalation path, where `protection.py` has attributed the job
-    to a confirmed required check. Without that:
-
-      MEDIUM  no job in the workflow consults upstream results at all, so nothing anywhere
-              would notice. 126 of the 196 D4 HIGH on the corpus were this.
-      LOW     the workflow DOES gate, just not over this upstream. Weaker on purpose: 55% of
-              real gates delegate the decision to a script the detector cannot read, so a
-              claim that an existing gate misses one upstream is the claim most likely to be
-              wrong.
-    """
-    base = _gate_severity(name, job, doc)
-    if base == "LOW":
-        return "LOW"
-    return "MEDIUM" if not has_gate else "LOW"
-
-
-def d4_outputs_gate_without_result_check(jobs: dict, doc: dict | None = None) -> list[Finding]:
-    """A job gated on an upstream's OUTPUTS, with nothing checking that upstream SUCCEEDED.
-
-    The common change-detection shape:  if: needs.detect.outputs.rust == 'true'
-
-    That is a deliberate optimisation and is NOT a defect by itself. The defect is what
-    happens when `detect` FAILS rather than decides: a failed job sets no outputs, the
-    comparison is false, the dependent job SKIPS, and a skipped job reports Success. One
-    broken detector silently disables the tests it gates, and the merge is green.
-
-    A job that also reads needs.<up>.result is doing it correctly and is not reported.
-    """
-    found = []
-    for name, job in jobs.items():
-        if not isinstance(job, dict):
-            continue
-        cond = str(job.get("if") or "")
-        if not cond:
-            continue
-        ups = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.outputs\.", cond))
-        if not ups:
-            continue
-        blob = cond + _job_blob(job)
-        checked = set(re.findall(r"needs\.([A-Za-z0-9_\-]+)\.result", blob))
-        if _reads_all_upstream_state(blob):
-            # `needs.*.result` asks about EVERY upstream, so it checks all of them at once.
-            # Expanding it is the difference between a correct gate and a reported one.
-            checked |= ups
-        sev = _d4_severity(name, job, doc or {}, _workflow_has_any_gate(jobs))
-        for up in sorted(ups - checked - _jobs_covered_by_a_wildcard_gate(jobs)):
-            found.append(Finding(
-                detector="D4",
-                severity=sev,
-                job=name,
-                title="tests silently disabled if the gating job fails",
-                detail=(f"job '{name}' runs only when '{up}' outputs say so, and nothing checks "
-                        f"needs.{up}.result. If '{up}' FAILS, its outputs are unset, the "
-                        f"condition is false, '{name}' skips, and a skipped job reports Success."),
-                repro=(f"Make '{up}' exit 1. '{name}' does not run and reports Success. "
-                       f"Whether that lets a merge through depends on which checks are "
-                       f"REQUIRED, which this file cannot say: if '{up}' is itself required, "
-                       f"its own failure blocks the merge and this is noise."),
-            ))
-    return found
-
-
+# D4 was REMOVED in 0.1.5, not demoted.
+#
+# It scored 0 defensible findings out of 18 in a pre-registered hand-labelled
+# sample, and it was the largest detector by volume: 932 findings over 93
+# repositories, 47% of everything this tool emitted. Its premise needed a
+# branch-protection fact no workflow file carries, so 0.1.3 capped it below HIGH
+# and left it reporting. A detector that has never once been right is not
+# improved by saying it quietly; LOW still costs a reader attention, and 724 LOW
+# findings cost a lot of it. Removal is the honest form of a zero.
 DETECTORS = (d1_skippable_upstream, d2_fanin_without_result_check,
-              d3_pipe_masked_exit, d4_outputs_gate_without_result_check)
+             d3_pipe_masked_exit)
 
 
 def active_detectors():

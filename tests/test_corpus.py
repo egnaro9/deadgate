@@ -107,37 +107,10 @@ jobs:
 """
 
 
-def test_d4_pr_verification_job_caps_at_medium_without_protection_data():
-    """D4 no longer reaches HIGH from the job's NAME.
-
-    This test asserted HIGH, inherited from `_gate_severity`, which returns HIGH when the
-    name matches test/lint/check and the workflow runs on pull_request. The finding it
-    labelled claims "any branch protection requiring it passes with nothing tested", and
-    whether the job is required is the one thing a workflow file cannot say.
-
-    Changed on evidence, not taste: in a pre-registered hand-labelled sample of 40 of this
-    tool's own surviving HIGH findings, D4 scored 0 defensible out of 18, and every arguable
-    case failed on exactly that point. HIGH is now reserved for the escalation path, where
-    branch protection has attributed the job to a confirmed required check.
-
-    MEDIUM here because this fixture's workflow has no fan-in gate at all, so nothing
-    anywhere would notice the skip.
-    """
-    f = [x for x in _scan(_yaml.safe_load(_PR_TEST)) if x.detector == "D4"]
-    assert f and f[0].severity == "MEDIUM", f
-    assert "cannot say" in f[0].repro, "the repro must state the condition, not assert it"
 
 
-def test_d4_release_publish_job_is_low():
-    """A tag-triggered publish that skips when no release was cut is working as intended."""
-    f = [x for x in _scan(_yaml.safe_load(_RELEASE_DEPLOY)) if x.detector == "D4"]
-    assert f and f[0].severity == "LOW", f
 
 
-def test_d4_unclear_pr_job_is_medium_not_high():
-    """When the file cannot say whether it is a check, do not claim it is."""
-    f = [x for x in _scan(_yaml.safe_load(_PR_UNCLEAR)) if x.detector == "D4"]
-    assert f and f[0].severity == "MEDIUM", f
 
 
 # --- D1 and D3 tiering ---------------------------------------------------------
@@ -371,3 +344,53 @@ jobs:
 """)
     assert [f for f in scan_workflow(doc) if f.detector == "D1"], (
         "a condition that can evaluate false must still be reported")
+
+
+# ---------------------------------------------------------------------------
+# D4 is REMOVED, not demoted. This test exists so it cannot come back quietly.
+#
+# It scored 0 defensible findings out of 18 in a pre-registered hand-labelled sample, and
+# it was the largest detector by volume: 932 findings over 93 repositories, 47% of
+# everything the tool emitted. 0.1.3 capped it below HIGH and left it reporting, which was
+# the wrong fix: a detector that has never once been right is not improved by saying it
+# quietly, and 724 LOW findings still cost a reader attention.
+#
+# The shape it fired on is a real hazard and is now UNDETECTED BY DESIGN: if a
+# change-detection job FAILS rather than decides, its outputs are unset, the condition is
+# false, the dependent skips, and a skipped job reports Success. The reason that is not
+# reported is that the file cannot distinguish it from the intended optimisation, and
+# whether the skip matters depends on which checks are required, which no workflow states.
+
+D4_SHAPE = """
+on: [pull_request]
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - id: filter
+        run: echo "rust=true" >> "$GITHUB_OUTPUT"
+  test:
+    needs: [detect]
+    if: ${{ needs.detect.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    steps: [{run: cargo test}]
+"""
+
+
+def test_no_detector_is_registered_as_D4():
+    from deadgate.detectors import active_detectors
+    assert not [f for f in active_detectors() if "d4" in f.__name__.lower()], \
+        "D4 was removed in 0.1.5 on a measured 0-of-18; re-adding needs new evidence"
+
+
+def test_the_outputs_gate_shape_reports_nothing():
+    """The fixture D4 used to own. Undetected by design, asserted so the silence is
+    deliberate rather than accidental."""
+    assert [f.detector for f in _scan(_yaml.safe_load(D4_SHAPE))] == []
+
+
+def test_the_corpus_holds_no_fixture_expecting_D4():
+    for path in BROKEN:
+        assert _expected(path) != "D4", f"{path.name} still expects a removed detector"

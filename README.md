@@ -133,6 +133,45 @@ is a separate and harder problem and is not in this release.
 ## Licence
 MIT
 
+## 0.1.5 removes D4
+
+**D4 is gone, not demoted.** It scored **0 defensible findings out of 18** in a
+pre-registered hand-labelled sample, and it was the largest detector by volume: **932
+findings over 93 repositories, 47% of everything this tool emitted.**
+
+0.1.3 capped it below HIGH and left it reporting. That was the wrong fix. A detector that
+has never once been right is not improved by saying it quietly, and 724 LOW findings still
+cost a reader attention. Removal is the honest form of a zero.
+
+Total output across 275 repositories and 4543 files, every severity: **1986 to 1054.**
+HIGH is unchanged at 125, because D4 had already stopped producing HIGH.
+
+### A real hazard that is now undetected by design
+
+D4 fired on a genuine failure mode: if a change-detection job FAILS rather than decides,
+its outputs are unset, the condition is false, the dependent job skips, and a skipped job
+reports Success. One broken path filter silently disables the tests it gates.
+
+That shape is no longer reported, and a test asserts the silence so it stays deliberate:
+
+```yaml
+detect:                                   # if this FAILS rather than decides...
+  outputs: { rust: "${{ steps.filter.outputs.rust }}" }
+test:
+  needs: [detect]
+  if: ${{ needs.detect.outputs.rust == 'true' }}   # ...this is false, test skips, green
+```
+
+The reason it is not reported is that a workflow file cannot distinguish it from the
+intended optimisation, which is the same shape, and whether the skip matters depends on
+which checks are required, which no workflow states. Eighteen hand-labelled attempts at
+that distinction produced nothing defensible. If a future version can read branch
+protection for the gating job specifically, the question becomes answerable and the
+detector can come back on evidence rather than on intuition.
+
+Removing it also surfaced three symbols that only D4 used, including two compiled patterns
+and a whole-context predicate, all now deleted.
+
 ## 0.1.4 closes two more classes, and D1 stops claiming HIGH
 
 **Upgrade from anything earlier.** Seven times now this tool has reported correct CI as
@@ -181,7 +220,7 @@ exact, no interval. Even after all three fixes above it is 65% false, with eleve
 survivors a single reporting job.
 
 "A required check is satisfied by a skipped job" needs a protection configuration no
-workflow file carries. So D1 follows D4 and D2: MEDIUM when nothing in the workflow
+workflow file carries. So D1 follows D2: MEDIUM when nothing in the workflow
 consults upstream results at all, LOW when something does, and HIGH only when
 `protection.py` confirms the job is a required check.
 
@@ -281,5 +320,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 219 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 198 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.
