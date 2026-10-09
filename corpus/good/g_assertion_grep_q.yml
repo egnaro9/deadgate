@@ -1,0 +1,16 @@
+# SILENT: D3
+#
+# The near miss of b3. `grep -q` is a CONTENT assertion, not a masked status: when the
+# head fails it emits nothing, grep matches nothing and exits 1, so the pipeline fails
+# exactly when the head does. Verified by running it, not by reading it.
+#
+# All 6 findings of this shape in D3's MEDIUM census were false, and no labelled true
+# finding has it.
+name: CI
+on: [pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: The binary must be arm64
+        run: file ./build/cli | grep -q arm64

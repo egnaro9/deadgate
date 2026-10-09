@@ -1,9 +1,26 @@
 # EXPECT: D3
+#
+# The masked value LEAVES the step. sha256sum fails on a missing artifact, cut succeeds
+# on empty input, the step's status is cut's, and `digest=` is written to $GITHUB_OUTPUT
+# for a consumer that has no way to know it is empty.
+#
+# This fixture used to be `curl -s https://example.test/health | grep -q ok`, which is
+# NOT a D3 defect and was the corpus specifying the wrong thing. `grep -q` fails when its
+# input is empty, so a failed curl produces no output, no match, and a failing step:
+#
+#     $ nosuchcommand 2>/dev/null | grep -q ok ; echo $?
+#     1
+#
+# The real hazard in that line is `curl -s` without `-f`, which does not fail on HTTP 500
+# and pipes the error body onward. That is a curl flag problem, not a masked pipe, and
+# D3's own finding text ("a failure upstream of the pipe passes") was false for it.
 name: CI
 on: [pull_request]
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Check endpoint is healthy
-        run: curl -s https://example.test/health | grep -q ok
+      - name: Publish the artifact digest
+        id: digest
+        run: |
+          echo "digest=$(sha256sum dist/artifact.tgz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"

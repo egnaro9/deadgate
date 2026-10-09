@@ -291,3 +291,47 @@ def test_a_process_substitution_is_not_reported_as_a_command_substitution():
     """Only `$( )` bodies are returned; `<( )` is matched for paren balance only."""
     bodies = _substitution_bodies("diff <(sort a | uniq) <(sort b)")
     assert bodies == [], bodies
+
+
+# ---------------------------------------------------------------------------
+# `cmd | grep -q PATTERN` is a content assertion, not a masked status.
+#
+# Demonstrable rather than likely. When the head fails it emits nothing, grep matches
+# nothing and exits 1, so the pipeline fails exactly when the head does:
+#
+#     $ nosuchcommand 2>/dev/null | grep -q arm64 ; echo $?
+#     1
+#
+# All 6 findings of this shape in D3's 153-finding MEDIUM census were false, as were the
+# ones in the HIGH census, and no labelled true finding has it.
+#
+# This also corrected the corpus. b3_pipe_masked_exit, the canonical D3 broken fixture,
+# was `curl -s https://example.test/health | grep -q ok`, which is NOT a D3 defect: the
+# finding's own text says "a failure upstream of the pipe passes" and that is false here.
+# The real hazard in that line is `curl -s` without `-f`, which does not fail on HTTP 500.
+# The fixture now carries a genuine masking and the grep -q form moved to corpus/good/.
+
+from deadgate.detectors import _tail_is_a_content_assertion
+
+
+def test_a_grep_q_tail_is_an_assertion():
+    for seg in ("file ./build/cli | grep -q arm64",
+                "nm retroarch | grep -q -- '-lpulse'",
+                "cmd | grep -sq pattern",
+                "cmd | grep --quiet pattern"):
+        assert _tail_is_a_content_assertion(seg), seg
+
+
+def test_a_plain_grep_tail_is_not_an_assertion():
+    """Without -q the output is the point, so the masked status still matters."""
+    for seg in ("cmd | grep pattern", "cmd | grep -E 'a|b'", "cmd | grep -v skip"):
+        assert not _tail_is_a_content_assertion(seg), seg
+
+
+def test_a_grep_q_pipeline_is_not_reported():
+    assert not _high("file ./build/cli | grep -q arm64\nexit 1")
+
+
+def test_the_same_pipeline_without_q_is_still_reported():
+    """The counter-case, so this cannot become a blanket mute on grep."""
+    assert _high('v=$(file ./build/cli | grep arm64)\necho "v=$v" >> "$GITHUB_OUTPUT"\nexit 1')

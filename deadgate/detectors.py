@@ -611,6 +611,29 @@ def _every_use_is_safe(var: str, body: str, assign_line: str) -> bool:
     return True
 
 
+# `cmd | grep -q PATTERN` does not mask anything, and that is demonstrable rather than
+# likely. When the head fails it produces no output, grep finds no match and exits 1, so
+# the pipeline fails exactly when the head does:
+#
+#     $ nosuchcommand 2>/dev/null | grep -q arm64 ; echo $?
+#     1
+#
+# grep -q is also asking about CONTENT, not status: it is the idiom for "does this output
+# contain X", and it short-circuits on the first match, which can SIGPIPE the head anyway.
+# All 6 such findings in D3's MEDIUM census were false, as were the ones in the HIGH
+# census, and no labelled true finding has this shape.
+#
+# The residual case is a head that prints a matching line and THEN fails. That is real but
+# narrow, and reporting every assertion to catch it is the trade this corpus says no to.
+_TAIL_IS_ASSERTION = re.compile(r"^grep\b.*(?:\s-\w*q|\s--quiet|\s--silent)")
+
+
+def _tail_is_a_content_assertion(segment: str) -> bool:
+    """True when the final filter is a `grep -q`, which fails when its input is empty."""
+    tail = segment.rsplit("|", 1)[1].strip() if "|" in segment else ""
+    return bool(_TAIL_IS_ASSERTION.match(tail))
+
+
 def _masked_status_can_matter(line: str, body: str) -> bool:
     """Could this masked exit status change any outcome?"""
     if not _LINE_CONSUMES.search(line):
@@ -718,6 +741,8 @@ def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
                 # reached even in principle.
                 for segment, filt in _pipeline_candidates(line):
                     if filt not in FILTERS or not _segment_head_can_fail(segment):
+                        continue
+                    if _tail_is_a_content_assertion(segment):
                         continue
                     assigned = (re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", line) or [None, ""])[1]
                     if _result_is_emptiness_checked(assigned, body):

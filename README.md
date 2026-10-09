@@ -37,17 +37,30 @@ Every figure below is hand-labelled. None is an estimate of an estimate.
 | detector | tier | basis | false |
 |---|---|---|---|
 | D3 | HIGH (94) | complete census | **30.9%** |
-| D3 | MEDIUM (153) | uncapped sample, n=30 | **70%** `[52, 83]` |
+| D3 | MEDIUM (144) | **complete census** | **54.9%** |
 | D3 | LOW (426) | uncapped sample, n=15 | **47%** `[25, 70]` |
 | D1 | all (373) | complete census of its 54 HIGH at 0.1.4 | **65%** |
 
-**What you see by default is about 55% false.** The CLI hides LOW without `--all`, so the
-default output is HIGH plus MEDIUM, 247 D3 findings, of which roughly 136 are wrong.
+**What you see by default is about 45% false.** The CLI hides LOW without `--all`, so the
+default output is HIGH plus MEDIUM, 238 D3 findings, of which about 108 are wrong.
 
-MEDIUM being worse than HIGH is established: the intervals do not overlap. MEDIUM being
-worse than LOW is **not** established, and neither is LOW being worse than HIGH, because
-those intervals do overlap. The point estimates suggest the MEDIUM/LOW ordering is
-inverted; the sample is too small to say so.
+MEDIUM is worse than HIGH, and both are now censused so that is exact. Whether MEDIUM is
+worse than LOW is still **not** established: LOW rests on n=15 and its interval `[25, 70]`
+contains MEDIUM's exact 54.9%. Settling it needs LOW measured properly, which has not been
+done.
+
+An uncapped n=30 sample put MEDIUM at 70%; the census says 54.9%. Off by 14 points, inside
+its own interval but near the edge, which is the cost of n=30 even with the cap removed.
+
+MEDIUM is not one population. Classified by shape, it splits sharply:
+
+| shape | n | false |
+|---|---|---|
+| a test, audit or publish piped to `tee` or a file | 59 | **22%** |
+| a captured value | 5 | 0% |
+| other | 30 | 77% |
+| a diagnostic head (`ls`, `df`, `--version`) | 23 | **96%** |
+| `grep -q` assertion | 6 | **100%**, now suppressed |
 
 The MEDIUM and LOW samples were drawn **uncapped**, which reverses the design of every
 earlier sample here. A per-repository cap makes the estimator unbiased for the per-job
@@ -538,5 +551,5 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 218 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
+There are 223 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
 suite ever drift apart again.
