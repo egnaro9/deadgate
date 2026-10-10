@@ -676,5 +676,8 @@ That gap is the lesson worth keeping. The tool was least accurate on the reposit
 BEST CI, which is the worst place for a linter to cry wolf, and no corpus average would have
 surfaced it. The suite passed unchanged through every one of the four, 149 of it through the
 first two fixes and 161 through the second two, so not one of them was covered by anything.
-There are 223 tests now, and `scripts/check_readme_test_count.py` fails if that number and the
-suite ever drift apart again.
+There are 223 tests now, and CI fails if that number and the suite ever drift apart again.
+The check used to be `scripts/check_readme_test_count.py` here; four other repositories
+held byte-identical copies of it, so it is now
+[readme-test-count](https://github.com/egnaro9/readme-test-count), installed at a pinned
+commit.

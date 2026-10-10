@@ -17,8 +17,19 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/ -q
+
+      # readme-test-count was this repo's scripts/check_readme_test_count.py until
+      # 2026-10-10. Four other repositories held byte-identical copies of it, which is a
+      # package that had not been written yet, so it became one.
+      #
+      # Pinned to a commit, not to main. A gate that silently tracks someone else's default
+      # branch is a gate whose behaviour that person can change, and the fact that the person
+      # is me makes it worse rather than better. Bumping the pin is a reviewed edit.
       - name: README's advertised test count must match the suite
-        run: python scripts/check_readme_test_count.py
+        run: |
+          set -o pipefail
+          pip install "git+https://github.com/egnaro9/readme-test-count@6752d7ec7e6177aceff6359905b1d68ab90b546a"
+          readme-test-count
       - name: Dogfood, deadgate must not flag its own workflow
         run: |
           set -o pipefail
