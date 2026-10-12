@@ -602,6 +602,21 @@ def _logical_lines(body: str):
         yield buf
 
 
+def _shell_sets_pipefail(step: dict, job: dict, doc: dict | None) -> bool:
+    """True when the shell that will run this step was started with pipefail.
+
+    GitHub resolves the shell from the step, then the job's defaults.run, then the
+    workflow's defaults.run. Only a shell line that names pipefail counts: a bare
+    `shell: bash` is still `bash -e {0}` with no pipefail.
+    """
+    for scope in (step, (job.get("defaults") or {}).get("run") or {},
+                  ((doc or {}).get("defaults") or {}).get("run") or {}):
+        shell = scope.get("shell") if isinstance(scope, dict) else None
+        if shell:
+            return "pipefail" in str(shell)
+    return False
+
+
 def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
     """A run: step whose exit status is the LAST command in a pipe, with no pipefail.
 
@@ -620,6 +635,12 @@ def d3_pipe_masked_exit(jobs: dict, doc: dict | None = None) -> list[Finding]:
                 continue
             body = str(run)
             if re.search(r"set\s+[-a-z]*o?\s*[-a-z]*pipefail|set\s+-o\s+pipefail", body):
+                continue
+            # pipefail set on the shell line counts too: `shell: bash -eo pipefail {0}` on
+            # the step, or `defaults.run.shell` on the job or the workflow. The first
+            # version read only the run: body and flagged a step whose own comment
+            # explained why its shell: line set pipefail (agent-graph ci.yml, 2026-10-12).
+            if _shell_sets_pipefail(step, job, doc):
                 continue
             # One finding per DISTINCT pipeline in a step, not one per step. The old
             # `break` capped a step at a single finding, so a step with two masked
