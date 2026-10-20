@@ -109,8 +109,12 @@ are where gates live.
 Per detector: D1 1315 to 414, D2 66 to 27, D4 2120 to 1415. D3 is untouched at 1061 and does
 not read upstream state at all.
 
-**The 9.1% average hides where it lands.** Only 10 of 275 repositories use the wildcard idiom
-at all, so those 43 false HIGH concentrate on them. Measured on Arize-ai/openinference (1.2k
+**The 9.1% average hides where it lands.** That figure is the wildcard fix alone (release
+0.1.1), measured on the capped 275-repository corpus (2047 workflow files,
+`sha256 efdf65ce734cd293`): it removed 43 of 473 HIGH. It is not comparable to the 40% above,
+which is release 0.1.1 to 0.1.2 on the uncapped corpus.
+Only 10 of 275 repositories use the wildcard idiom at all, so those 43 false HIGH concentrate on
+them. Measured on Arize-ai/openinference (1.2k
 stars, 22 workflows), whose go/java/python/typescript `ci-required` jobs each read it twice,
 counting every severity with `--all`:
 
@@ -126,7 +130,7 @@ detector cannot see; D3 does not read upstream state and neither fix touches it.
 
 The tool was most wrong about the repository with the most carefully written gates, which is the
 worst place for a linter to cry wolf, and it is why a corpus average was not enough to notice:
-9.1% across the corpus, 92% on this one repository.
+9.1% across the capped corpus for that single fix, 92% on this one repository.
 
 All 149 tests passed before and after both fixes, so neither defect was covered. The suite is
 156 now. One of the fixes was itself wrong and was caught the same way: the gate-coverage check
